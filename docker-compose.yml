@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15
+    container_name: dsns-db
+    restart: always
+    environment:
+      POSTGRES_USER: dsns_admin
+      POSTGRES_PASSWORD: supersecretpassword
+      POSTGRES_DB: dsns_database
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

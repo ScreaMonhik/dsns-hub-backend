@@ -1,0 +1,206 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum VoteType {
+  UPVOTE
+  DOWNVOTE
+}
+
+enum AuditAction {
+  UPDATED
+  DELETED
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          Role     @default(USER)
+  avatarUrl     String?
+  createdAt     DateTime @default(now())
+
+  // Зв'язки
+  news          News[]
+  newsComments  NewsComment[]
+  newsLikes     NewsLike[]
+  projects      Project[]
+  projectComms  ProjectComment[]
+  projectVotes  ProjectVote[]
+  messages      ChatMessage[]
+  auditLogs     MessagesAuditLog[]
+  pollVotes     PollVote[]
+  chatGroups    GroupMember[]
+}
+
+model Department {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  documents  Document[]
+  polls      Poll[]
+}
+
+model News {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  
+  comments  NewsComment[]
+  likes     NewsLike[]
+}
+
+model NewsComment {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+  
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  
+  newsId    String
+  news      News     @relation(fields: [newsId], references: [id], onDelete: Cascade)
+}
+
+model NewsLike {
+  userId String
+  newsId String
+  user   User @relation(fields: [userId], references: [id])
+  news   News @relation(fields: [newsId], references: [id], onDelete: Cascade)
+
+  @@id([userId, newsId])
+}
+
+model Document {
+  id           String   @id @default(uuid())
+  title        String
+  fileUrl      String
+  createdAt    DateTime @default(now())
+  
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  title       String
+  description String
+  createdAt   DateTime @default(now())
+  
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+  
+  comments    ProjectComment[]
+  votes       ProjectVote[]
+}
+
+model ProjectComment {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+  
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model ProjectVote {
+  voteType  VoteType
+  userId    String
+  projectId String
+  user      User    @relation(fields: [userId], references: [id])
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([userId, projectId])
+}
+
+model ChatGroup {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  
+  members   GroupMember[]
+  messages  ChatMessage[]
+}
+
+model GroupMember {
+  userId  String
+  groupId String
+  user    User      @relation(fields: [userId], references: [id])
+  group   ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([userId, groupId])
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  content   String
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id])
+  
+  groupId   String
+  group     ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+}
+
+model MessagesAuditLog {
+  id         String      @id @default(uuid())
+  messageId  String
+  oldContent String
+  action     AuditAction
+  changedAt  DateTime    @default(now())
+  
+  userId     String
+  changedBy  User        @relation(fields: [userId], references: [id])
+}
+
+model Poll {
+  id           String   @id @default(uuid())
+  title        String
+  createdAt    DateTime @default(now())
+  
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  
+  options      PollOption[]
+}
+
+model PollOption {
+  id      String   @id @default(uuid())
+  text    String
+  
+  pollId  String
+  poll    Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  
+  votes   PollVote[]
+}
+
+model PollVote {
+  userId   String
+  optionId String
+  user     User       @relation(fields: [userId], references: [id])
+  option   PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, optionId])
+}
