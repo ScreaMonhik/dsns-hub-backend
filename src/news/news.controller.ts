@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, UseGuards, Req, Query, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, Req, Query, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { NewsService } from './news.service';
 import { CreateNewsDto } from './dto/create-news.dto';
+import { CreateNewsCommentDto } from './dto/create-news-comment.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -33,5 +34,30 @@ export class NewsController {
     @Query('take', new DefaultValuePipe(10), ParseIntPipe) take: number,
   ) {
     return this.newsService.findAll(skip, take);
+  }
+
+  @ApiOperation({ summary: 'Get a single news article with comments' })
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.newsService.findOne(id);
+  }
+
+  @ApiOperation({ summary: 'Add a comment to a news article' })
+  @Post(':id/comments')
+  addComment(
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+    @Body() dto: CreateNewsCommentDto,
+  ) {
+    return this.newsService.addComment(id, req.user.sub, dto.content);
+  }
+
+  @ApiOperation({ summary: 'Toggle like on a news article' })
+  @Post(':id/like')
+  toggleLike(
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.newsService.toggleLike(id, req.user.sub);
   }
 }

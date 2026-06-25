@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNewsDto } from './dto/create-news.dto';
 
@@ -31,5 +31,69 @@ export class NewsService {
         },
       },
     });
+  }
+
+  async findOne(id: string) {
+    const news = await this.prisma.news.findUnique({
+      where: { id },
+      include: {
+        author: {
+          select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+        },
+        comments: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: {
+              select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+            },
+          },
+        },
+        _count: {
+          select: { likes: true, comments: true },
+        },
+      },
+    });
+
+    if (!news) {
+      throw new NotFoundException('Новину не знайдено');
+    }
+
+    return news;
+  }
+
+  async addComment(newsId: string, authorId: string, content: string) {
+    // Перевіряємо чи існує новина
+    await this.findOne(newsId);
+
+    return this.prisma.newsComment.create({
+      data: {
+        content,
+        authorId,
+        newsId,
+      },
+    });
+  }
+
+  async toggleLike(newsId: string, userId: string) {
+    // Перевіряємо чи існує новина
+    await this.findOne(newsId);
+
+    const existingLike = await this.prisma.newsLike.findUnique({
+      where: {
+        userId_newsId: { userId, newsId },
+      },
+    });
+
+    if (existingLike) {
+      await this.prisma.newsLike.delete({
+        where: { userId_newsId: { userId, newsId } },
+      });
+      return { message: 'Лайк видалено', liked: false };
+    } else {
+      await this.prisma.newsLike.create({
+        data: { userId, newsId },
+      });
+      return { message: 'Лайк додано', liked: true };
+    }
   }
 }
