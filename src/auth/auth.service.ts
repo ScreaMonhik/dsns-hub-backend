@@ -70,7 +70,7 @@ export class AuthService {
     }
 
     // 3. Генеруємо JWT токен
-    const payload = { sub: user.id, email: user.email };
+    const payload = { sub: user.id, email: user.email, role: user.role };
     
     return {
       access_token: await this.jwtService.signAsync(payload),
