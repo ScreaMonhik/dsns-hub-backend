@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNewsDto } from './dto/create-news.dto';
+import { VoteType } from '@prisma/client';
 
 @Injectable()
 export class NewsService {
@@ -18,7 +19,7 @@ export class NewsService {
   }
 
   async findAll(skip: number = 0, take: number = 10) {
-    return this.prisma.news.findMany({
+    const articles = await this.prisma.news.findMany({
       skip,
       take,
       orderBy: { createdAt: 'desc' },
@@ -26,10 +27,16 @@ export class NewsService {
         author: {
           select: { id: true, firstName: true, lastName: true, avatarUrl: true },
         },
-        _count: {
-          select: { comments: true, likes: true },
-        },
+        votes: { select: { voteType: true } },
+        _count: { select: { comments: true } },
       },
+    });
+
+    return articles.map((article) => {
+      const upvotes = article.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
+      const downvotes = article.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
+      const { votes, ...rest } = article;
+      return { ...rest, upvotes, downvotes };
     });
   }
 
@@ -48,9 +55,7 @@ export class NewsService {
             },
           },
         },
-        _count: {
-          select: { likes: true, comments: true },
-        },
+        votes: true,
       },
     });
 
@@ -58,42 +63,46 @@ export class NewsService {
       throw new NotFoundException('Новину не знайдено');
     }
 
-    return news;
+    const upvotes = news.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
+    const downvotes = news.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
+    const commentsCount = news.comments.length;
+
+    return { ...news, upvotes, downvotes, _count: { comments: commentsCount } };
   }
 
   async addComment(newsId: string, authorId: string, content: string) {
-    // Перевіряємо чи існує новина
     await this.findOne(newsId);
 
     return this.prisma.newsComment.create({
-      data: {
-        content,
-        authorId,
-        newsId,
-      },
+      data: { content, authorId, newsId },
     });
   }
 
-  async toggleLike(newsId: string, userId: string) {
-    // Перевіряємо чи існує новина
+  async vote(newsId: string, userId: string, voteType: VoteType) {
     await this.findOne(newsId);
 
-    const existingLike = await this.prisma.newsLike.findUnique({
-      where: {
-        userId_newsId: { userId, newsId },
-      },
+    const existingVote = await this.prisma.newsVote.findUnique({
+      where: { userId_newsId: { userId, newsId } },
     });
 
-    if (existingLike) {
-      await this.prisma.newsLike.delete({
-        where: { userId_newsId: { userId, newsId } },
-      });
-      return { message: 'Лайк видалено', liked: false };
-    } else {
-      await this.prisma.newsLike.create({
-        data: { userId, newsId },
-      });
-      return { message: 'Лайк додано', liked: true };
+    if (existingVote) {
+      if (existingVote.voteType === voteType) {
+        await this.prisma.newsVote.delete({
+          where: { userId_newsId: { userId, newsId } },
+        });
+        return { message: 'Голос видалено' };
+      } else {
+        await this.prisma.newsVote.update({
+          where: { userId_newsId: { userId, newsId } },
+          data: { voteType },
+        });
+        return { message: 'Голос змінено' };
+      }
     }
+
+    await this.prisma.newsVote.create({
+      data: { userId, newsId, voteType },
+    });
+    return { message: 'Голос зараховано' };
   }
 }

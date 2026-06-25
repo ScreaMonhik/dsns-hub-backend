@@ -68,22 +68,23 @@ export class DocumentsController {
           cb(null, `${uniqueSuffix}${ext}`);
         },
       }),
+      fileFilter: (req, file, cb) => {
+        if (file.mimetype !== 'application/pdf') {
+          return cb(new BadRequestException('Only PDF files are allowed'), false);
+        }
+        cb(null, true);
+      },
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10 MB limit
+      },
     }),
   )
   uploadDocument(
     @Body() dto: CreateDocumentDto,
-    @UploadedFile(
-      new ParseFilePipe({
-        validators: [
-          new MaxFileSizeValidator({ maxSize: 10 * 1024 * 1024 }), // Ліміт 10 МБ
-          new FileTypeValidator({ fileType: 'application/pdf' }),
-        ],
-      }),
-    )
-    file: Express.Multer.File,
+    @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file) {
-      throw new BadRequestException('Файл не завантажено');
+      throw new BadRequestException('File is not uploaded');
     }
 
     const fileUrl = `/documents/download/${file.filename}`;

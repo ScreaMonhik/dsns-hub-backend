@@ -8,6 +8,8 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Request } from 'express';
+import { VoteNewsDto } from './dto/vote-news.dto';
+import { ApiBody } from '@nestjs/swagger';
 
 interface RequestWithUser extends Request {
   user: { sub: string; email: string; role: Role };
@@ -52,12 +54,14 @@ export class NewsController {
     return this.newsService.addComment(id, req.user.sub, dto.content);
   }
 
-  @ApiOperation({ summary: 'Toggle like on a news article' })
-  @Post(':id/like')
-  toggleLike(
+  @ApiOperation({ summary: 'Проголосувати за новину (Лайк / Дизлайк)' })
+  @ApiBody({ type: VoteNewsDto })
+  @Post(':id/vote')
+  vote(
     @Param('id') id: string,
     @Req() req: RequestWithUser,
+    @Body() dto: VoteNewsDto,
   ) {
-    return this.newsService.toggleLike(id, req.user.sub);
+    return this.newsService.vote(id, req.user.sub, dto.voteType);
   }
 }
