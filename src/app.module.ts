@@ -9,6 +9,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { ProjectsModule } from './projects/projects.module';
 import { PollsModule } from './polls/polls.module';
 import { ChatModule } from './chat/chat.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -19,7 +20,8 @@ import { ChatModule } from './chat/chat.module';
     DocumentsModule, 
     ProjectsModule, 
     PollsModule, 
-    ChatModule
+    ChatModule, 
+    UsersModule
   ],
   controllers: [AppController],
   providers: [AppService],
