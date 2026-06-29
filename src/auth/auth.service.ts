@@ -62,6 +62,10 @@ export class AuthService {
       throw new UnauthorizedException('Невірний email або пароль');
     }
 
+    if (!user.isActive) {
+      throw new ForbiddenException('Ваш обліковий запис заблоковано');
+    }
+
     // 2. Перевіряємо хеш пароля
     const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
     
