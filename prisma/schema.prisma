@@ -28,9 +28,10 @@ enum NewsStatus {
 }
 
 model NewsCategory {
-  id    String @id @default(uuid())
-  name  String @unique
-  news  News[]
+  id         String @id @default(uuid())
+  name       String @unique
+  orderIndex Int    @default(0)
+  news       News[]
 }
 
 model User {

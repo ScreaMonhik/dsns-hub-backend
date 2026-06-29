@@ -21,6 +21,7 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, createReadStream } from 'fs';
+import { ReorderCategoriesDto } from './dto/reorder-categories.dto';
 
 const newsUploadDir = join(process.cwd(), 'uploads', 'news');
 if (!existsSync(newsUploadDir)) {
@@ -112,6 +113,20 @@ export class NewsController {
   @Post('categories')
   createCategory(@Body() dto: CreateCategoryDto) {
     return this.newsService.createCategory(dto);
+  }
+
+  @ApiOperation({ summary: 'Оновити порядок категорій новин (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch('categories/reorder')
+  reorderCategories(@Body() dto: ReorderCategoriesDto) { // Не забудьте імпортувати ReorderCategoriesDto
+    return this.newsService.reorderCategories(dto.categoryIds);
+  }
+
+  @ApiOperation({ summary: 'Видалити категорію новин (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete('categories/:id')
+  removeCategory(@Param('id') id: string) {
+    return this.newsService.removeCategory(id);
   }
 
   @ApiOperation({ summary: 'Отримати деталі однієї новини з коментарями' })

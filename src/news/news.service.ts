@@ -115,8 +115,29 @@ export class NewsService {
 
   async findAllCategories() {
     return this.prisma.newsCategory.findMany({
-      orderBy: { name: 'asc' },
+      orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
     });
+  }
+
+  async removeCategory(id: string) {
+    const category = await this.prisma.newsCategory.findUnique({ where: { id } });
+    if (!category) throw new NotFoundException('Категорію не знайдено');
+    
+    await this.prisma.newsCategory.delete({ where: { id } });
+    return { message: 'Категорію успішно видалено' };
+  }
+
+  async reorderCategories(categoryIds: string[]) {
+    // Використовуємо транзакцію для безпечного масового оновлення
+    const queries = categoryIds.map((id, index) =>
+      this.prisma.newsCategory.update({
+        where: { id },
+        data: { orderIndex: index },
+      }),
+    );
+    
+    await this.prisma.$transaction(queries);
+    return { message: 'Порядок категорій оновлено' };
   }
 
   async addComment(newsId: string, authorId: string, content: string) {
