@@ -1,7 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNewsDto } from './dto/create-news.dto';
-import { VoteType } from '@prisma/client';
+import { UpdateNewsDto } from './dto/update-news.dto';
+import { CreateCategoryDto } from './dto/create-category.dto';
+import { VoteType, NewsStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class NewsService {
@@ -13,31 +15,53 @@ export class NewsService {
         title: dto.title,
         content: dto.content,
         imageUrl: dto.imageUrl,
+        status: dto.status,
+        categoryId: dto.categoryId,
         authorId,
       },
     });
   }
 
-  async findAll(skip: number = 0, take: number = 10) {
-    const articles = await this.prisma.news.findMany({
-      skip,
-      take,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        author: {
-          select: { id: true, firstName: true, lastName: true, avatarUrl: true },
-        },
-        votes: { select: { voteType: true } },
-        _count: { select: { comments: true } },
-      },
-    });
+  async findAll(page: number, limit: number, categoryId?: string, status?: NewsStatus) {
+    const skip = (page - 1) * limit;
 
-    return articles.map((article) => {
+    const where: Prisma.NewsWhereInput = {};
+    if (categoryId) where.categoryId = categoryId;
+    if (status) where.status = status;
+
+    const [articles, total] = await Promise.all([
+      this.prisma.news.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          author: {
+            select: { id: true, firstName: true, lastName: true, avatarUrl: true },
+          },
+          category: true,
+          votes: { select: { voteType: true } },
+          _count: { select: { comments: true } },
+        },
+      }),
+      this.prisma.news.count({ where }),
+    ]);
+
+    const mappedData = articles.map((article) => {
       const upvotes = article.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
       const downvotes = article.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
       const { votes, ...rest } = article;
       return { ...rest, upvotes, downvotes };
     });
+
+    return {
+      data: mappedData,
+      meta: {
+        total,
+        page,
+        lastPage: Math.ceil(total / limit),
+      },
+    };
   }
 
   async findOne(id: string) {
@@ -47,6 +71,7 @@ export class NewsService {
         author: {
           select: { id: true, firstName: true, lastName: true, avatarUrl: true },
         },
+        category: true,
         comments: {
           orderBy: { createdAt: 'desc' },
           include: {
@@ -59,15 +84,39 @@ export class NewsService {
       },
     });
 
-    if (!news) {
-      throw new NotFoundException('Новину не знайдено');
-    }
+    if (!news) throw new NotFoundException('Новину не знайдено');
 
     const upvotes = news.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
     const downvotes = news.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
     const commentsCount = news.comments.length;
 
     return { ...news, upvotes, downvotes, _count: { comments: commentsCount } };
+  }
+
+  async update(id: string, dto: UpdateNewsDto) {
+    await this.findOne(id);
+    return this.prisma.news.update({
+      where: { id },
+      data: dto,
+    });
+  }
+
+  async remove(id: string) {
+    await this.findOne(id);
+    await this.prisma.news.delete({ where: { id } });
+    return { message: 'Новину успішно видалено' };
+  }
+
+  async createCategory(dto: CreateCategoryDto) {
+    return this.prisma.newsCategory.create({
+      data: { name: dto.name },
+    });
+  }
+
+  async findAllCategories() {
+    return this.prisma.newsCategory.findMany({
+      orderBy: { name: 'asc' },
+    });
   }
 
   async addComment(newsId: string, authorId: string, content: string) {
