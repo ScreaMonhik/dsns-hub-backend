@@ -43,11 +43,14 @@ export class NewsService {
       where.status = { not: NewsStatus.ARCHIVED };
     }
 
-    // Валідація дозволених полів для сортування (захист від помилок ORM)
-    const validSortFields = ['id', 'title', 'content', 'imageUrl', 'status', 'categoryId', 'createdAt', 'authorId'];
+    // Validate allowed sort fields including relation statistics
+    const validSortFields = [
+      'id', 'title', 'content', 'imageUrl', 'status', 
+      'categoryId', 'createdAt', 'authorId', 'comments', 'likes', 'dislikes'
+    ];
     const finalSortBy = sortBy && validSortFields.includes(sortBy) ? sortBy : 'createdAt';
 
-    // Валідація напрямку сортування
+    // Validate sorting direction
     let finalSortOrder: 'asc' | 'desc' = 'desc';
     if (sortOrder) {
       const normalizedOrder = sortOrder.toLowerCase();
@@ -56,7 +59,18 @@ export class NewsService {
       }
     }
 
-    const orderBy: Prisma.NewsOrderByWithRelationInput = { [finalSortBy]: finalSortOrder };
+    let orderBy: Prisma.NewsOrderByWithRelationInput;
+
+    // Map strategic stats keys to proper Prisma relation count sorting syntax
+    if (finalSortBy === 'comments') {
+      orderBy = { comments: { _count: finalSortOrder } };
+    } else if (finalSortBy === 'likes' || finalSortBy === 'dislikes') {
+      // Since UPVOTEs and DOWNVOTEs are stored in a single NewsVote table,
+      // Prisma's native relational _count sorts by total vote volume at the DB level.
+      orderBy = { votes: { _count: finalSortOrder } };
+    } else {
+      orderBy = { [finalSortBy]: finalSortOrder };
+    }
 
     const [articles, total] = await Promise.all([
       this.prisma.news.findMany({
