@@ -22,6 +22,7 @@ import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
 import { existsSync, mkdirSync, createReadStream } from 'fs';
 import { ReorderCategoriesDto } from './dto/reorder-categories.dto';
+import { UpdateCategoryDto } from './dto/update-category.dto';
 
 const newsUploadDir = join(process.cwd(), 'uploads', 'news');
 if (!existsSync(newsUploadDir)) {
@@ -120,6 +121,13 @@ export class NewsController {
   @Patch('categories/reorder')
   reorderCategories(@Body() dto: ReorderCategoriesDto) { // Не забудьте імпортувати ReorderCategoriesDto
     return this.newsService.reorderCategories(dto.categoryIds);
+  }
+
+  @ApiOperation({ summary: 'Редагувати назву категорії новин (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch('categories/:id')
+  updateCategory(@Param('id') id: string, @Body() dto: UpdateCategoryDto) {
+    return this.newsService.updateCategory(id, dto);
   }
 
   @ApiOperation({ summary: 'Видалити категорію новин (Тільки ADMIN)' })

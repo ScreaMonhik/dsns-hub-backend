@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateNewsDto } from './dto/create-news.dto';
 import { UpdateNewsDto } from './dto/update-news.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
+import { UpdateCategoryDto } from './dto/update-category.dto';
 import { VoteType, NewsStatus, Prisma } from '@prisma/client';
 
 @Injectable()
@@ -116,6 +117,16 @@ export class NewsService {
   async findAllCategories() {
     return this.prisma.newsCategory.findMany({
       orderBy: [{ orderIndex: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async updateCategory(id: string, dto: UpdateCategoryDto) {
+    const category = await this.prisma.newsCategory.findUnique({ where: { id } });
+    if (!category) throw new NotFoundException('Категорію не знайдено');
+
+    return this.prisma.newsCategory.update({
+      where: { id },
+      data: { name: dto.name },
     });
   }
 
