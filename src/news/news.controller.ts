@@ -99,8 +99,10 @@ export class NewsController {
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @Query('categoryId') categoryId?: string,
     @Query('status') status?: NewsStatus,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: string,
   ) {
-    return this.newsService.findAll(page, limit, categoryId, status);
+    return this.newsService.findAll(page, limit, categoryId, status, sortBy, sortOrder);
   }
 
   @ApiOperation({ summary: 'Отримати всі категорії новин' })
@@ -165,6 +167,22 @@ export class NewsController {
     @Body() dto: CreateNewsCommentDto,
   ) {
     return this.newsService.addComment(id, req.user.sub, dto.content);
+  }
+
+  @ApiOperation({ summary: 'Отримати всі коментарі до новини' })
+  @Get(':id/comments')
+  findComments(@Param('id') id: string) {
+    return this.newsService.findComments(id);
+  }
+
+  @ApiOperation({ summary: 'Видалити коментар адміністратором (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':newsId/comments/:commentId')
+  removeComment(
+    @Param('newsId') newsId: string,
+    @Param('commentId') commentId: string,
+  ) {
+    return this.newsService.removeComment(newsId, commentId);
   }
 
   @ApiOperation({ summary: 'Проголосувати за новину (Лайк / Дизлайк)' })

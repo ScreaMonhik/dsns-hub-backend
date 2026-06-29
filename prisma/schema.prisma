@@ -25,6 +25,7 @@ enum AuditAction {
 enum NewsStatus {
   DRAFT
   PUBLISHED
+  ARCHIVED
 }
 
 model NewsCategory {

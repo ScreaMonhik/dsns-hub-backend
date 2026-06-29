@@ -23,19 +23,47 @@ export class NewsService {
     });
   }
 
-  async findAll(page: number, limit: number, categoryId?: string, status?: NewsStatus) {
+  async findAll(
+    page: number,
+    limit: number,
+    categoryId?: string,
+    status?: NewsStatus,
+    sortBy?: string,
+    sortOrder?: string,
+  ) {
     const skip = (page - 1) * limit;
 
     const where: Prisma.NewsWhereInput = {};
     if (categoryId) where.categoryId = categoryId;
-    if (status) where.status = status;
+    
+    // Враховуємо логіку архівації з попереднього кроку
+    if (status) {
+      where.status = status;
+    } else {
+      where.status = { not: NewsStatus.ARCHIVED };
+    }
+
+    // Валідація дозволених полів для сортування (захист від помилок ORM)
+    const validSortFields = ['id', 'title', 'content', 'imageUrl', 'status', 'categoryId', 'createdAt', 'authorId'];
+    const finalSortBy = sortBy && validSortFields.includes(sortBy) ? sortBy : 'createdAt';
+
+    // Валідація напрямку сортування
+    let finalSortOrder: 'asc' | 'desc' = 'desc';
+    if (sortOrder) {
+      const normalizedOrder = sortOrder.toLowerCase();
+      if (normalizedOrder === 'asc' || normalizedOrder === 'desc') {
+        finalSortOrder = normalizedOrder;
+      }
+    }
+
+    const orderBy: Prisma.NewsOrderByWithRelationInput = { [finalSortBy]: finalSortOrder };
 
     const [articles, total] = await Promise.all([
       this.prisma.news.findMany({
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         include: {
           author: {
             select: { id: true, firstName: true, lastName: true, avatarUrl: true },
@@ -52,7 +80,14 @@ export class NewsService {
       const upvotes = article.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
       const downvotes = article.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
       const { votes, ...rest } = article;
-      return { ...rest, upvotes, downvotes };
+      return { 
+        ...rest, 
+        _count: {
+          comments: article._count.comments,
+          likes: upvotes,
+          dislikes: downvotes,
+        }
+      };
     });
 
     return {
@@ -157,6 +192,44 @@ export class NewsService {
     return this.prisma.newsComment.create({
       data: { content, authorId, newsId },
     });
+  }
+
+  async findComments(newsId: string) {
+    await this.findOne(newsId);
+
+    return this.prisma.newsComment.findMany({
+      where: { newsId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+        author: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+  }
+
+  async removeComment(newsId: string, commentId: string) {
+    const comment = await this.prisma.newsComment.findFirst({
+      where: { id: commentId, newsId },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment not found or does not belong to this news');
+    }
+
+    await this.prisma.newsComment.delete({
+      where: { id: commentId },
+    });
+
+    return { message: 'Comment successfully deleted' };
   }
 
   async vote(newsId: string, userId: string, voteType: VoteType) {
