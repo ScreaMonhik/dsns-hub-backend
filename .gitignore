@@ -71,3 +71,7 @@ structure.txt
 *.db
 *.db-journal
 *.sqlite
+
+*.pdf
+*.png
+*.jpeg
