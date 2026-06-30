@@ -29,18 +29,21 @@ export class PollsService {
           ? { connect: dto.departmentIds.map((id) => ({ id })) }
           : undefined,
         options: {
-          create: dto.options.map((text) => ({ text })),
+          create: dto.options.map((text, index) => ({ text, orderIndex: index })),
         },
       },
       include: {
         departments: true,
-        options: true,
+        options: {
+          orderBy: { orderIndex: 'asc' },
+        },
       },
     });
   }
 
   async findAll(
     departmentId?: string,
+    status?: PollStatus,
     sortBy?: 'createdAt' | 'votes' | 'author',
     sortOrder: 'asc' | 'desc' = 'desc',
     page?: string | number,
@@ -49,15 +52,23 @@ export class PollsService {
     const pageNumber = Math.max(1, Number(page) || 1);
     const limitNumber = Math.max(1, Number(limit) || 10);
 
+    const whereClause: Prisma.PollWhereInput = {};
+
+    if (departmentId) {
+      whereClause.OR = [
+        { departments: { some: { id: departmentId } } }, // Цільові опитування для підрозділу
+        { departments: { none: {} } },                   // Загальні опитування (для всіх)
+      ];
+    }
+
+    if (status) {
+      whereClause.status = status;
+    } else {
+      whereClause.status = { not: PollStatus.ARCHIVED };
+    }
+
     const polls = await this.prisma.poll.findMany({
-      where: departmentId
-        ? {
-            OR: [
-              { departments: { some: { id: departmentId } } }, // Цільові опитування для підрозділу
-              { departments: { none: {} } },                   // Загальні опитування (для всіх)
-            ],
-          }
-        : {},
+      where: whereClause,
       orderBy: sortBy === 'createdAt' ? { createdAt: sortOrder } : { createdAt: 'desc' },
       include: {
         departments: true,
@@ -71,6 +82,7 @@ export class PollsService {
           },
         },
         options: {
+          orderBy: { orderIndex: 'asc' },
           include: {
             _count: { select: { votes: true } },
           },
@@ -127,6 +139,7 @@ export class PollsService {
           },
         },
         options: {
+          orderBy: { orderIndex: 'asc' },
           include: {
             _count: { select: { votes: true } },
           },
@@ -202,12 +215,37 @@ export class PollsService {
       throw new NotFoundException('Опитування не знайдено');
     }
 
-    // Дозволяємо редагування ТІЛЬКИ якщо статус DRAFT
+    const { options, departmentIds, ...updateData } = dto;
+
+    // If the poll is already PUBLISHED or ARCHIVED, allow changing ONLY its status field
     if (poll.status !== PollStatus.DRAFT) {
-      throw new BadRequestException('Редагування дозволено тільки для опитувань у статусі DRAFT (чернетка до публікації).');
+      const { status, ...contentFields } = updateData;
+      const hasContentUpdates =
+        Object.keys(contentFields).length > 0 ||
+        options !== undefined ||
+        departmentIds !== undefined;
+
+      if (hasContentUpdates) {
+        throw new BadRequestException(
+          'Редагування контенту (назви, опису, варіантів чи підрозділів) дозволено тільки для опитувань у статусі DRAFT.',
+        );
+      }
+
+      return this.prisma.poll.update({
+        where: { id },
+        data: { status },
+        include: {
+          departments: true,
+          options: {
+            orderBy: { orderIndex: 'asc' },
+            include: {
+              _count: { select: { votes: true } },
+            },
+          },
+        },
+      });
     }
 
-    const { options, departmentIds, ...updateData } = dto;
     const dataToUpdate: Prisma.PollUpdateInput = { ...updateData };
 
     // Оновлюємо масив підрозділів за допомогою 'set', якщо він переданий (навіть якщо порожній)
@@ -235,12 +273,13 @@ export class PollsService {
           data: {
             ...dataToUpdate,
             options: {
-              create: options.map((text) => ({ text })),
+              create: options.map((text, index) => ({ text, orderIndex: index })),
             },
           },
           include: {
             departments: true,
             options: {
+              orderBy: { orderIndex: 'asc' },
               include: {
                 _count: { select: { votes: true } },
               },
@@ -257,6 +296,7 @@ export class PollsService {
       include: {
         departments: true,
         options: {
+          orderBy: { orderIndex: 'asc' },
           include: {
             _count: { select: { votes: true } },
           },

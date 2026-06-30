@@ -217,8 +217,9 @@ model Poll {
 }
 
 model PollOption {
-  id   String @id @default(uuid())
-  text String
+  id         String @id @default(uuid())
+  text       String
+  orderIndex Int    @default(0)
 
   pollId String
   poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)

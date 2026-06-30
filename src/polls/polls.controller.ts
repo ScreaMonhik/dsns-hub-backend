@@ -6,7 +6,7 @@ import { VotePollDto } from './dto/vote-poll.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role, PollStatus } from '@prisma/client';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Request } from 'express';
 
@@ -46,12 +46,13 @@ export class PollsController {
   @Get()
   findAll(
     @Query('departmentId') departmentId?: string,
+    @Query('status') status?: PollStatus,
     @Query('sortBy') sortBy?: 'createdAt' | 'votes' | 'author',
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.pollsService.findAll(departmentId, sortBy, sortOrder, page, limit);
+    return this.pollsService.findAll(departmentId, status, sortBy, sortOrder, page, limit);
   }
 
   @ApiOperation({ summary: 'Отримати конкретне опитування' })
