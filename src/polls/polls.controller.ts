@@ -42,14 +42,16 @@ export class PollsController {
     return this.pollsService.remove(id);
   }
 
-  @ApiOperation({ summary: 'Отримати список опитувань (із фільтрацією та сортуванням)' })
+  @ApiOperation({ summary: 'Отримати список опитувань (із фільтрацією, сортуванням та пагінацією)' })
   @Get()
   findAll(
     @Query('departmentId') departmentId?: string,
     @Query('sortBy') sortBy?: 'createdAt' | 'votes' | 'author',
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.pollsService.findAll(departmentId, sortBy, sortOrder);
+    return this.pollsService.findAll(departmentId, sortBy, sortOrder, page, limit);
   }
 
   @ApiOperation({ summary: 'Отримати конкретне опитування' })

@@ -43,7 +43,12 @@ export class PollsService {
     departmentId?: string,
     sortBy?: 'createdAt' | 'votes' | 'author',
     sortOrder: 'asc' | 'desc' = 'desc',
+    page?: string | number,
+    limit?: string | number,
   ) {
+    const pageNumber = Math.max(1, Number(page) || 1);
+    const limitNumber = Math.max(1, Number(limit) || 10);
+
     const polls = await this.prisma.poll.findMany({
       where: departmentId
         ? {
@@ -91,7 +96,20 @@ export class PollsService {
       });
     }
 
-    return pollsWithTotal;
+    const total = pollsWithTotal.length;
+    const lastPage = Math.ceil(total / limitNumber);
+    const startIndex = (pageNumber - 1) * limitNumber;
+    const paginatedData = pollsWithTotal.slice(startIndex, startIndex + limitNumber);
+
+    return {
+      data: paginatedData,
+      meta: {
+        total,
+        page: pageNumber,
+        lastPage,
+        limit: limitNumber,
+      },
+    };
   }
 
   async findOne(id: string) {
