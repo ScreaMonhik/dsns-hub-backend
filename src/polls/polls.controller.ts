@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, Patch, Delete } from '@nestjs/common';
 import { PollsService } from './polls.service';
 import { CreatePollDto } from './dto/create-poll.dto';
+import { UpdatePollDto } from './dto/update-poll.dto';
 import { VotePollDto } from './dto/vote-poll.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -23,14 +24,32 @@ export class PollsController {
   @ApiOperation({ summary: 'Створити опитування (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
   @Post()
-  create(@Body() dto: CreatePollDto) {
-    return this.pollsService.create(dto);
+  create(@Req() req: RequestWithUser, @Body() dto: CreatePollDto) {
+    return this.pollsService.create(req.user.sub, dto);
   }
 
-  @ApiOperation({ summary: 'Отримати список опитувань (опціонально по підрозділу)' })
+  @ApiOperation({ summary: 'Редагувати опитування (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdatePollDto) {
+    return this.pollsService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Видалити опитування (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.pollsService.remove(id);
+  }
+
+  @ApiOperation({ summary: 'Отримати список опитувань (із фільтрацією та сортуванням)' })
   @Get()
-  findAll(@Query('departmentId') departmentId?: string) {
-    return this.pollsService.findAll(departmentId);
+  findAll(
+    @Query('departmentId') departmentId?: string,
+    @Query('sortBy') sortBy?: 'createdAt' | 'votes' | 'author',
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+  ) {
+    return this.pollsService.findAll(departmentId, sortBy, sortOrder);
   }
 
   @ApiOperation({ summary: 'Отримати конкретне опитування' })

@@ -28,6 +28,12 @@ enum NewsStatus {
   ARCHIVED
 }
 
+enum PollStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model NewsCategory {
   id         String @id @default(uuid())
   name       String @unique
@@ -36,34 +42,35 @@ model NewsCategory {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  email         String   @unique
-  passwordHash  String
-  firstName     String
-  lastName      String
-  role          Role     @default(USER)
-  avatarUrl     String?
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         Role     @default(USER)
+  avatarUrl    String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
 
   // Зв'язки
-  news          News[]
-  newsComments  NewsComment[]
-  newsVotes     NewsVote[]
-  projects      Project[]
-  projectComms  ProjectComment[]
-  projectVotes  ProjectVote[]
-  messages      ChatMessage[]
-  auditLogs     MessagesAuditLog[]
-  pollVotes     PollVote[]
-  chatGroups    GroupMember[]
+  news         News[]
+  newsComments NewsComment[]
+  newsVotes    NewsVote[]
+  projects     Project[]
+  projectComms ProjectComment[]
+  projectVotes ProjectVote[]
+  messages     ChatMessage[]
+  auditLogs    MessagesAuditLog[]
+  polls        Poll[]
+  pollVotes    PollVote[]
+  chatGroups   GroupMember[]
 }
 
 model Department {
-  id         String   @id @default(uuid())
-  name       String   @unique
-  documents  Document[]
-  polls      Poll[]
+  id        String     @id @default(uuid())
+  name      String     @unique
+  documents Document[]
+  polls     Poll[]
 }
 
 model News {
@@ -75,42 +82,42 @@ model News {
   categoryId String?
   category   NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   createdAt  DateTime      @default(now())
-  
-  authorId   String
-  author     User          @relation(fields: [authorId], references: [id])
-  
-  comments   NewsComment[]
-  votes      NewsVote[]
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  comments NewsComment[]
+  votes    NewsVote[]
 }
 
 model NewsComment {
   id        String   @id @default(uuid())
   content   String
   createdAt DateTime @default(now())
-  
-  authorId  String
-  author    User     @relation(fields: [authorId], references: [id])
-  
-  newsId    String
-  news      News     @relation(fields: [newsId], references: [id], onDelete: Cascade)
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  newsId String
+  news   News   @relation(fields: [newsId], references: [id], onDelete: Cascade)
 }
 
 model NewsVote {
-  voteType  VoteType
-  userId    String
-  newsId    String
-  user      User     @relation(fields: [userId], references: [id])
-  news      News     @relation(fields: [newsId], references: [id], onDelete: Cascade)
+  voteType VoteType
+  userId   String
+  newsId   String
+  user     User     @relation(fields: [userId], references: [id])
+  news     News     @relation(fields: [newsId], references: [id], onDelete: Cascade)
 
   @@id([userId, newsId])
 }
 
 model Document {
-  id           String   @id @default(uuid())
-  title        String
-  fileUrl      String
-  createdAt    DateTime @default(now())
-  
+  id        String   @id @default(uuid())
+  title     String
+  fileUrl   String
+  createdAt DateTime @default(now())
+
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id])
 }
@@ -120,32 +127,32 @@ model Project {
   title       String
   description String
   createdAt   DateTime @default(now())
-  
-  authorId    String
-  author      User     @relation(fields: [authorId], references: [id])
-  
-  comments    ProjectComment[]
-  votes       ProjectVote[]
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  comments ProjectComment[]
+  votes    ProjectVote[]
 }
 
 model ProjectComment {
   id        String   @id @default(uuid())
   content   String
   createdAt DateTime @default(now())
-  
-  authorId  String
-  author    User     @relation(fields: [authorId], references: [id])
-  
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model ProjectVote {
   voteType  VoteType
   userId    String
   projectId String
-  user      User    @relation(fields: [userId], references: [id])
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@id([userId, projectId])
 }
@@ -154,9 +161,9 @@ model ChatGroup {
   id        String   @id @default(uuid())
   name      String
   createdAt DateTime @default(now())
-  
-  members   GroupMember[]
-  messages  ChatMessage[]
+
+  members  GroupMember[]
+  messages ChatMessage[]
 }
 
 model GroupMember {
@@ -174,12 +181,12 @@ model ChatMessage {
   isDeleted Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
-  senderId  String
-  sender    User     @relation(fields: [senderId], references: [id])
-  
-  groupId   String
-  group     ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation(fields: [senderId], references: [id])
+
+  groupId String
+  group   ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 }
 
 model MessagesAuditLog {
@@ -188,30 +195,35 @@ model MessagesAuditLog {
   oldContent String
   action     AuditAction
   changedAt  DateTime    @default(now())
-  
-  userId     String
-  changedBy  User        @relation(fields: [userId], references: [id])
+
+  userId    String
+  changedBy User   @relation(fields: [userId], references: [id])
 }
 
 model Poll {
-  id           String   @id @default(uuid())
-  title        String
-  createdAt    DateTime @default(now())
-  
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
+  id          String     @id @default(uuid())
+  title       String
+  description String?    @db.Text
+  status      PollStatus @default(PUBLISHED)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  authorId     String?
+  author       User?      @relation(fields: [authorId], references: [id])
+
+  departments  Department[]
   
   options      PollOption[]
 }
 
 model PollOption {
-  id      String   @id @default(uuid())
-  text    String
-  
-  pollId  String
-  poll    Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
-  
-  votes   PollVote[]
+  id   String @id @default(uuid())
+  text String
+
+  pollId String
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  votes PollVote[]
 }
 
 model PollVote {

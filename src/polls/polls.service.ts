@@ -1,41 +1,70 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePollDto } from './dto/create-poll.dto';
+import { UpdatePollDto } from './dto/update-poll.dto';
+import { PollStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class PollsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreatePollDto) {
-    const department = await this.prisma.department.findUnique({
-      where: { id: dto.departmentId },
-    });
+  async create(authorId: string, dto: CreatePollDto) {
+    if (dto.departmentIds && dto.departmentIds.length > 0) {
+      const departments = await this.prisma.department.findMany({
+        where: { id: { in: dto.departmentIds } },
+      });
 
-    if (!department) {
-      throw new NotFoundException('Підрозділ не знайдено');
+      if (departments.length !== dto.departmentIds.length) {
+        throw new BadRequestException('Один або декілька вказаних підрозділів не знайдено в базі даних');
+      }
     }
 
-    // Використовуємо вкладені запити (Nested Writes) Prisma для одночасного створення опитування та його варіантів
     return this.prisma.poll.create({
       data: {
         title: dto.title,
-        departmentId: dto.departmentId,
+        description: dto.description,
+        status: dto.status,
+        authorId,
+        departments: dto.departmentIds?.length
+          ? { connect: dto.departmentIds.map((id) => ({ id })) }
+          : undefined,
         options: {
           create: dto.options.map((text) => ({ text })),
         },
       },
       include: {
+        departments: true,
         options: true,
       },
     });
   }
 
-  async findAll(departmentId?: string) {
+  async findAll(
+    departmentId?: string,
+    sortBy?: 'createdAt' | 'votes' | 'author',
+    sortOrder: 'asc' | 'desc' = 'desc',
+  ) {
     const polls = await this.prisma.poll.findMany({
-      where: departmentId ? { departmentId } : {},
-      orderBy: { createdAt: 'desc' },
+      where: departmentId
+        ? {
+            OR: [
+              { departments: { some: { id: departmentId } } }, // Цільові опитування для підрозділу
+              { departments: { none: {} } },                   // Загальні опитування (для всіх)
+            ],
+          }
+        : {},
+      orderBy: sortBy === 'createdAt' ? { createdAt: sortOrder } : { createdAt: 'desc' },
       include: {
-        department: true,
+        departments: true,
+        author: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            avatarUrl: true,
+          },
+        },
         options: {
           include: {
             _count: { select: { votes: true } },
@@ -44,17 +73,41 @@ export class PollsService {
       },
     });
 
-    return polls.map((poll) => {
+    const pollsWithTotal = polls.map((poll) => {
       const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
       return { ...poll, totalVotes };
     });
+
+    // Сортування у пам'яті для обчислених або реляційних полів
+    if (sortBy === 'votes') {
+      pollsWithTotal.sort((a, b) => {
+        return sortOrder === 'asc' ? a.totalVotes - b.totalVotes : b.totalVotes - a.totalVotes;
+      });
+    } else if (sortBy === 'author') {
+      pollsWithTotal.sort((a, b) => {
+        const nameA = a.author ? `${a.author.lastName} ${a.author.firstName}`.toLowerCase() : '';
+        const nameB = b.author ? `${b.author.lastName} ${b.author.firstName}`.toLowerCase() : '';
+        return sortOrder === 'asc' ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+      });
+    }
+
+    return pollsWithTotal;
   }
 
   async findOne(id: string) {
     const poll = await this.prisma.poll.findUnique({
       where: { id },
       include: {
-        department: true,
+        departments: true,
+        author: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            avatarUrl: true,
+          },
+        },
         options: {
           include: {
             _count: { select: { votes: true } },
@@ -72,13 +125,19 @@ export class PollsService {
   }
 
   async vote(pollId: string, userId: string, optionId: string) {
-    // 1. Перевіряємо чи існує опція і чи належить вона саме цьому опитуванню
+    // 1. Перевіряємо чи існує опція, чи належить вона саме цьому опитуванню, та завантажуємо статус опитування
     const option = await this.prisma.pollOption.findFirst({
       where: { id: optionId, pollId },
+      include: { poll: true },
     });
 
     if (!option) {
       throw new BadRequestException('Некоректний варіант відповіді для цього опитування');
+    }
+
+    // Захист: заборона голосування за чернетки
+    if (option.poll.status === PollStatus.DRAFT) {
+      throw new BadRequestException('Неможливо проголосувати в опитуванні, яке знаходиться в статусі чернетки (DRAFT).');
     }
 
     // 2. Шукаємо, чи голосував вже цей користувач у ЦЬОМУ опитуванні (за будь-яку опцію)
@@ -114,5 +173,87 @@ export class PollsService {
     });
 
     return { message: 'Голос зараховано' };
+  }
+
+  async update(id: string, dto: UpdatePollDto) {
+    const poll = await this.prisma.poll.findUnique({
+      where: { id },
+    });
+
+    if (!poll) {
+      throw new NotFoundException('Опитування не знайдено');
+    }
+
+    // Дозволяємо редагування ТІЛЬКИ якщо статус DRAFT
+    if (poll.status !== PollStatus.DRAFT) {
+      throw new BadRequestException('Редагування дозволено тільки для опитувань у статусі DRAFT (чернетка до публікації).');
+    }
+
+    const { options, departmentIds, ...updateData } = dto;
+    const dataToUpdate: Prisma.PollUpdateInput = { ...updateData };
+
+    // Оновлюємо масив підрозділів за допомогою 'set', якщо він переданий (навіть якщо порожній)
+    if (departmentIds) {
+      dataToUpdate.departments = {
+        set: departmentIds.map((deptId) => ({ id: deptId })),
+      };
+    }
+
+    // Якщо прийшли нові варіанти відповідей, виконуємо транзакцію заміни
+    if (options) {
+      if (options.length < 2) {
+        throw new BadRequestException('Опитування повинно містити щонайменше 2 варіанти відповідей.');
+      }
+
+      return this.prisma.$transaction(async (tx) => {
+        // 1. Спочатку повністю очищуємо старі варіанти цієї чернетки
+        await tx.pollOption.deleteMany({
+          where: { pollId: id },
+        });
+
+        // 2. Оновлюємо дані опитування та створюємо нові варіанти
+        return tx.poll.update({
+          where: { id },
+          data: {
+            ...dataToUpdate,
+            options: {
+              create: options.map((text) => ({ text })),
+            },
+          },
+          include: {
+            departments: true,
+            options: {
+              include: {
+                _count: { select: { votes: true } },
+              },
+            },
+          },
+        });
+      });
+    }
+
+    // Якщо міняються тільки текстові поля чи підрозділи без перезапису options
+    return this.prisma.poll.update({
+      where: { id },
+      data: dataToUpdate,
+      include: {
+        departments: true,
+        options: {
+          include: {
+            _count: { select: { votes: true } },
+          },
+        },
+      },
+    });
+  }
+
+  async remove(id: string) {
+    const poll = await this.prisma.poll.findUnique({ where: { id } });
+    if (!poll) {
+      throw new NotFoundException('Опитування не знайдено');
+    }
+
+    await this.prisma.poll.delete({ where: { id } });
+    return { message: 'Опитування успешно видалено' };
   }
 }
