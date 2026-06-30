@@ -9,6 +9,10 @@ export class PollsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(authorId: string, dto: CreatePollDto) {
+    if (dto.expiresAt && new Date(dto.expiresAt) <= new Date()) {
+      throw new BadRequestException('Час завершення (expiresAt) має бути у майбутньому часі.');
+    }
+
     if (dto.departmentIds && dto.departmentIds.length > 0) {
       const departments = await this.prisma.department.findMany({
         where: { id: { in: dto.departmentIds } },
@@ -24,6 +28,7 @@ export class PollsService {
         title: dto.title,
         description: dto.description,
         status: dto.status,
+        expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
         authorId,
         departments: dto.departmentIds?.length
           ? { connect: dto.departmentIds.map((id) => ({ id })) }
@@ -171,6 +176,11 @@ export class PollsService {
       throw new BadRequestException('Неможливо проголосувати в опитуванні, яке знаходиться в статусі чернетки (DRAFT).');
     }
 
+    // Захист: перевірка терміну дії (Expiration)
+    if (option.poll.expiresAt && new Date() > option.poll.expiresAt) {
+      throw new BadRequestException('Час голосування вичерпано.');
+    }
+
     // 2. Шукаємо, чи голосував вже цей користувач у ЦЬОМУ опитуванні (за будь-яку опцію)
     const existingVote = await this.prisma.pollVote.findFirst({
       where: {
@@ -215,7 +225,11 @@ export class PollsService {
       throw new NotFoundException('Опитування не знайдено');
     }
 
-    const { options, departmentIds, ...updateData } = dto;
+    const { options, departmentIds, expiresAt, ...updateData } = dto;
+
+    if (expiresAt && new Date(expiresAt) <= new Date()) {
+      throw new BadRequestException('Час завершення (expiresAt) має бути у майбутньому часі.');
+    }
 
     // If the poll is already PUBLISHED or ARCHIVED, allow changing ONLY its status field
     if (poll.status !== PollStatus.DRAFT) {
@@ -233,7 +247,10 @@ export class PollsService {
 
       return this.prisma.poll.update({
         where: { id },
-        data: { status },
+        data: { 
+          status, 
+          ...(expiresAt !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null })
+        },
         include: {
           departments: true,
           options: {
@@ -246,7 +263,10 @@ export class PollsService {
       });
     }
 
-    const dataToUpdate: Prisma.PollUpdateInput = { ...updateData };
+    const dataToUpdate: Prisma.PollUpdateInput = { 
+      ...updateData,
+      ...(expiresAt !== undefined && { expiresAt: expiresAt ? new Date(expiresAt) : null }),
+    };
 
     // Оновлюємо масив підрозділів за допомогою 'set', якщо він переданий (навіть якщо порожній)
     if (departmentIds) {

@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsUUID, IsArray, ArrayMinSize, IsOptional, IsEnum } from 'class-validator';
+import { IsString, IsNotEmpty, IsUUID, IsArray, ArrayMinSize, IsOptional, IsEnum, IsDateString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PollStatus } from '@prisma/client';
 
@@ -33,4 +33,10 @@ export class CreatePollDto {
   @IsString({ each: true })
   @ArrayMinSize(2)
   options!: string[];
+
+  @ApiPropertyOptional({ description: 'Час завершення опитування', example: '2026-12-31T23:59:59Z' })
+  @IsOptional()
+  @IsDateString({}, { message: 'expiresAt має бути коректною датою у форматі ISO 8601' })
+  expiresAt?: string;
+
 }
