@@ -67,10 +67,11 @@ model User {
 }
 
 model Department {
-  id        String     @id @default(uuid())
-  name      String     @unique
-  documents Document[]
-  polls     Poll[]
+  id         String      @id @default(uuid())
+  name       String      @unique
+  documents  Document[]
+  polls      Poll[]
+  chatGroups ChatGroup[]
 }
 
 model News {
@@ -158,19 +159,26 @@ model ProjectVote {
 }
 
 model ChatGroup {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
+  id           String      @id @default(uuid())
+  name         String
+  avatarUrl    String?
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdAt    DateTime    @default(now())
 
   members  GroupMember[]
   messages ChatMessage[]
 }
 
 model GroupMember {
-  userId  String
-  groupId String
-  user    User      @relation(fields: [userId], references: [id])
-  group   ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId   String
+  groupId  String
+  isAdmin  Boolean   @default(false)
+  isPinned Boolean   @default(false)
+  pinOrder Int?      // Зберігає індекс послідовності закріплених чатів
+  joinedAt DateTime  @default(now())
+  user     User      @relation(fields: [userId], references: [id])
+  group    ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@id([userId, groupId])
 }
