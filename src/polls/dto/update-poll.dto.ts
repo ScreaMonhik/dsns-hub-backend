@@ -1,4 +1,5 @@
-import { PartialType } from '@nestjs/swagger';
+import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsDateString, IsOptional } from 'class-validator';
 import { CreatePollDto } from './create-poll.dto';
 
 export class UpdatePollDto extends PartialType(CreatePollDto) {
