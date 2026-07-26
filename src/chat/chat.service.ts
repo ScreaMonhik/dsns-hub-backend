@@ -40,23 +40,22 @@ export class ChatService {
     });
   }
 
-  async getUserGroups(userId: string, userRole: Role) {
-    if (userRole === Role.ADMIN) {
-      return this.prisma.chatGroup.findMany({
-        include: {
-          department: { select: { id: true, name: true } },
-          _count: { select: { members: true } },
-          messages: { orderBy: { createdAt: 'desc' }, take: 1 },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-    }
+  async getAllGroups() {
+    return this.prisma.chatGroup.findMany({
+      include: {
+        department: { select: { id: true, name: true } },
+        _count: { select: { members: true } },
+        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 
+  async getUserGroups(userId: string) {
     return this.prisma.chatGroup.findMany({
       where: { members: { some: { userId } } },
       include: {
         department: { select: { id: true, name: true } },
-        // Повертаємо pinOrder для сортування на стороні клієнта
         members: { where: { userId }, select: { isPinned: true, pinOrder: true, isAdmin: true } },
         _count: { select: { members: true } },
         messages: { orderBy: { createdAt: 'desc' }, take: 1 },
@@ -66,10 +65,40 @@ export class ChatService {
 
   async getGroupMessages(groupId: string, user: { sub: string; role: Role }) {
     await this.verifyMembership(groupId, user);
-    return this.prisma.chatMessage.findMany({
+    const messages = await this.prisma.chatMessage.findMany({
       where: { groupId },
       orderBy: { createdAt: 'asc' },
       include: { sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
+    });
+
+    return {
+      data: messages,
+      meta: {
+        total: messages.length,
+      },
+    };
+  }
+
+  async getGroupMembers(groupId: string, user: { sub: string; role: Role }) {
+    await this.verifyMembership(groupId, user);
+    
+    return this.prisma.groupMember.findMany({
+      where: { groupId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            avatarUrl: true,
+          }
+        }
+      },
+      orderBy: [
+        { isAdmin: 'desc' }, // Адміни завжди зверху списку
+        { joinedAt: 'asc' }
+      ]
     });
   }
 
@@ -170,6 +199,17 @@ export class ChatService {
 
     return this.prisma.groupMember.create({
       data: { groupId, userId: userIdToAdd, isAdmin: assignAsAdmin },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            avatarUrl: true,
+          },
+        },
+      },
     });
   }
 
@@ -177,6 +217,34 @@ export class ChatService {
     await this.verifyMembership(groupId, adminUser, true);
     return this.prisma.groupMember.delete({
       where: { userId_groupId: { userId: userIdToRemove, groupId } },
+    });
+  }
+
+  async updateMemberRole(groupId: string, adminUser: { sub: string; role: Role }, targetUserId: string, isAdmin: boolean) {
+    await this.verifyMembership(groupId, adminUser, true);
+
+    const membership = await this.prisma.groupMember.findUnique({
+      where: { userId_groupId: { userId: targetUserId, groupId } },
+    });
+
+    if (!membership) {
+      throw new NotFoundException('User is not a member of this group');
+    }
+
+    return this.prisma.groupMember.update({
+      where: { userId_groupId: { userId: targetUserId, groupId } },
+      data: { isAdmin },
+      include: {
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            avatarUrl: true,
+          },
+        },
+      },
     });
   }
 

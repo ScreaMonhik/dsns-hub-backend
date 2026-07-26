@@ -34,3 +34,10 @@ export class ReorderPinnedChatsDto {
   @IsNotEmpty()
   groupIds!: string[];
 }
+
+export class UpdateMemberRoleDto {
+  @ApiProperty({ description: 'Grant or revoke group admin rights', example: true })
+  @IsBoolean()
+  @IsNotEmpty()
+  isAdmin!: boolean;
+}
