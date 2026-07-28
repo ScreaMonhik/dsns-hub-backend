@@ -145,10 +145,22 @@ export class NewsService {
   }
 
   async update(id: string, dto: UpdateNewsDto) {
-    await this.findOne(id);
+    await this.findOne(id); // Validation check
+
+    // Extract departmentIds to prevent passing it directly to Prisma
+    const { departmentIds, ...restData } = dto;
+
     return this.prisma.news.update({
       where: { id },
-      data: dto,
+      data: {
+        ...restData,
+        // If departmentIds is provided (even an empty array []), replace the relations
+        ...(departmentIds !== undefined && {
+          departments: {
+            set: departmentIds.map((deptId) => ({ id: deptId })),
+          },
+        }),
+      },
     });
   }
 
