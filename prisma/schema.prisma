@@ -83,8 +83,7 @@ model News {
   status       NewsStatus    @default(PUBLISHED)
   categoryId   String?
   category     NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  departmentId String?
-  department   Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  departments  Department[]
   createdAt    DateTime      @default(now())
 
   authorId     String

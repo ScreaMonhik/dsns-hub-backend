@@ -18,7 +18,9 @@ export class NewsService {
         imageUrl: dto.imageUrl,
         status: dto.status,
         categoryId: dto.categoryId,
-        departmentId: dto.departmentId,
+        departments: dto.departmentIds?.length ? {
+          connect: dto.departmentIds.map((id) => ({ id }))
+        } : undefined,
         authorId,
       },
     });
@@ -35,16 +37,11 @@ export class NewsService {
   ) {
     const skip = (page - 1) * limit;
 
-    const where: Prisma.NewsWhereInput = {};
-    if (categoryId) where.categoryId = categoryId;
-    if (departmentId) where.departmentId = departmentId;
-    
-    // Враховуємо логіку архівації з попереднього кроку
-    if (status) {
-      where.status = status;
-    } else {
-      where.status = { not: NewsStatus.ARCHIVED };
-    }
+    const where: Prisma.NewsWhereInput = {
+      ...(categoryId && { categoryId }),
+      ...(departmentId && { departments: { some: { id: departmentId } } }),
+      status: status ? status : { not: NewsStatus.ARCHIVED },
+    };
 
     // Validate allowed sort fields including relation statistics
     const validSortFields = [
@@ -86,7 +83,7 @@ export class NewsService {
             select: { id: true, firstName: true, lastName: true, avatarUrl: true },
           },
           category: true,
-          department: { select: { id: true, name: true } },
+          departments: { select: { id: true, name: true } },
           votes: { select: { voteType: true } },
           _count: { select: { comments: true } },
         },

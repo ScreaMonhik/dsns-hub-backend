@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { NewsStatus } from '@prisma/client';
 
@@ -28,8 +28,9 @@ export class CreateNewsDto {
   @IsOptional()
   categoryId?: string;
 
-  @ApiPropertyOptional({ description: 'ID підрозділу', format: 'uuid' })
-  @IsUUID('4')
+  @ApiPropertyOptional({ description: 'Масив ID підрозділів', type: [String] })
+  @IsArray()
+  @IsUUID('4', { each: true })
   @IsOptional()
-  departmentId?: string;
+  departmentIds?: string[];
 }
