@@ -27,4 +27,9 @@ export class CreateNewsDto {
   @IsUUID('4')
   @IsOptional()
   categoryId?: string;
+
+  @ApiPropertyOptional({ description: 'ID підрозділу', format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  departmentId?: string;
 }

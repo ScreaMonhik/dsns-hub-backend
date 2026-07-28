@@ -18,6 +18,7 @@ export class NewsService {
         imageUrl: dto.imageUrl,
         status: dto.status,
         categoryId: dto.categoryId,
+        departmentId: dto.departmentId,
         authorId,
       },
     });
@@ -30,11 +31,13 @@ export class NewsService {
     status?: NewsStatus,
     sortBy?: string,
     sortOrder?: string,
+    departmentId?: string,
   ) {
     const skip = (page - 1) * limit;
 
     const where: Prisma.NewsWhereInput = {};
     if (categoryId) where.categoryId = categoryId;
+    if (departmentId) where.departmentId = departmentId;
     
     // Враховуємо логіку архівації з попереднього кроку
     if (status) {
@@ -83,6 +86,7 @@ export class NewsService {
             select: { id: true, firstName: true, lastName: true, avatarUrl: true },
           },
           category: true,
+          department: { select: { id: true, name: true } },
           votes: { select: { voteType: true } },
           _count: { select: { comments: true } },
         },

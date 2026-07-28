@@ -101,8 +101,9 @@ export class NewsController {
     @Query('status') status?: NewsStatus,
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: string,
+    @Query('departmentId') departmentId?: string,
   ) {
-    return this.newsService.findAll(page, limit, categoryId, status, sortBy, sortOrder);
+    return this.newsService.findAll(page, limit, categoryId, status, sortBy, sortOrder, departmentId);
   }
 
   @ApiOperation({ summary: 'Отримати всі категорії новин' })

@@ -72,23 +72,26 @@ model Department {
   documents  Document[]
   polls      Poll[]
   chatGroups ChatGroup[]
+  news       News[]
 }
 
 model News {
-  id         String        @id @default(uuid())
-  title      String
-  content    String        @db.Text
-  imageUrl   String?
-  status     NewsStatus    @default(PUBLISHED)
-  categoryId String?
-  category   NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  createdAt  DateTime      @default(now())
+  id           String        @id @default(uuid())
+  title        String
+  content      String        @db.Text
+  imageUrl     String?
+  status       NewsStatus    @default(PUBLISHED)
+  categoryId   String?
+  category     NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  departmentId String?
+  department   Department?   @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdAt    DateTime      @default(now())
 
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id])
+  authorId     String
+  author       User          @relation(fields: [authorId], references: [id])
 
-  comments NewsComment[]
-  votes    NewsVote[]
+  comments     NewsComment[]
+  votes        NewsVote[]
 }
 
 model NewsComment {
