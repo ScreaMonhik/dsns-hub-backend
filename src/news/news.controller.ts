@@ -47,12 +47,12 @@ export class NewsController {
     return this.newsService.create(req.user.sub, createNewsDto);
   }
 
-  @ApiOperation({ summary: 'Завантажити зображення для новин/редактора (Тільки ADMIN)' })
+  @ApiOperation({ summary: 'Завантажити зображення або відео для новин/редактора (Тільки ADMIN)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
-      properties: { file: { type: 'string', format: 'binary', description: 'Зображення (JPEG/PNG)' } },
+      properties: { file: { type: 'string', format: 'binary', description: 'Файл (JPEG/PNG/MP4/WEBM/OGG)' } },
       required: ['file'],
     },
   })
@@ -69,12 +69,12 @@ export class NewsController {
         },
       }),
       fileFilter: (req, file, cb) => {
-        if (!file.mimetype.match(/\/(jpg|jpeg|png)$/)) {
-          return cb(new BadRequestException('Дозволені тільки файли зображень!'), false);
+        if (!file.mimetype.match(/\/(jpg|jpeg|png|mp4|webm|ogg)$/)) {
+          return cb(new BadRequestException('Дозволені тільки зображення (JPEG/PNG) або відео (MP4/WEBM/OGG)!'), false);
         }
         cb(null, true);
       },
-      limits: { fileSize: 5 * 1024 * 1024 },
+      limits: { fileSize: 100 * 1024 * 1024 },
     }),
   )
   uploadMedia(@UploadedFile() file: Express.Multer.File) {
@@ -82,14 +82,55 @@ export class NewsController {
     return { url: `/news/media/${file.filename}` };
   }
 
-  @ApiOperation({ summary: 'Отримати файл зображення за його ім\'ям' })
+  @ApiOperation({ summary: 'Отримати медіафайл (з підтримкою Range-запитів для відео)' })
   @Get('media/:filename')
-  getMedia(@Param('filename') filename: string, @Res({ passthrough: true }) res: Response): StreamableFile {
+  getMedia(
+    @Param('filename') filename: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
     const filePath = join(newsUploadDir, filename);
     if (!existsSync(filePath)) throw new NotFoundException('Файл не знайдено');
-    
-    res.set({ 'Content-Type': filename.endsWith('.png') ? 'image/png' : 'image/jpeg' });
-    return new StreamableFile(createReadStream(filePath));
+
+    const stat = require('fs').statSync(filePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+
+    let contentType = 'application/octet-stream';
+    if (filename.endsWith('.png')) contentType = 'image/png';
+    else if (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) contentType = 'image/jpeg';
+    else if (filename.endsWith('.mp4')) contentType = 'video/mp4';
+    else if (filename.endsWith('.webm')) contentType = 'video/webm';
+    else if (filename.endsWith('.ogg')) contentType = 'video/ogg';
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+      if (start >= fileSize || end >= fileSize || start > end) {
+        res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
+        return;
+      }
+
+      const chunksize = end - start + 1;
+      const fileStream = createReadStream(filePath, { start, end });
+      
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': contentType,
+      });
+      fileStream.pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+      });
+      createReadStream(filePath).pipe(res);
+    }
   }
 
   @ApiOperation({ summary: 'Отримати стрічку новин з пагінацією та фільтрами' })
