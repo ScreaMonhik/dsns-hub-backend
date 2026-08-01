@@ -136,6 +136,7 @@ export class NewsController {
   @ApiOperation({ summary: 'Отримати стрічку новин з пагінацією та фільтрами' })
   @Get()
   findAll(
+    @Req() req: RequestWithUser,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @Query('categoryId') categoryId?: string,
@@ -144,7 +145,16 @@ export class NewsController {
     @Query('sortOrder') sortOrder?: string,
     @Query('departmentId') departmentId?: string,
   ) {
-    return this.newsService.findAll(page, limit, categoryId, status, sortBy, sortOrder, departmentId);
+    return this.newsService.findAll(
+      req.user.sub,
+      page,
+      limit,
+      categoryId,
+      status,
+      sortBy,
+      sortOrder,
+      departmentId,
+    );
   }
 
   @ApiOperation({ summary: 'Отримати всі категорії новин' })

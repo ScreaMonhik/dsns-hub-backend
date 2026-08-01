@@ -27,6 +27,7 @@ export class NewsService {
   }
 
   async findAll(
+    currentUserId: string,
     page: number,
     limit: number,
     categoryId?: string,
@@ -43,14 +44,12 @@ export class NewsService {
       status: status ? status : { not: NewsStatus.ARCHIVED },
     };
 
-    // Validate allowed sort fields including relation statistics
     const validSortFields = [
       'id', 'title', 'content', 'imageUrl', 'status', 
       'categoryId', 'createdAt', 'authorId', 'comments', 'likes', 'dislikes'
     ];
     const finalSortBy = sortBy && validSortFields.includes(sortBy) ? sortBy : 'createdAt';
 
-    // Validate sorting direction
     let finalSortOrder: 'asc' | 'desc' = 'desc';
     if (sortOrder) {
       const normalizedOrder = sortOrder.toLowerCase();
@@ -61,12 +60,9 @@ export class NewsService {
 
     let orderBy: Prisma.NewsOrderByWithRelationInput;
 
-    // Map strategic stats keys to proper Prisma relation count sorting syntax
     if (finalSortBy === 'comments') {
       orderBy = { comments: { _count: finalSortOrder } };
     } else if (finalSortBy === 'likes' || finalSortBy === 'dislikes') {
-      // Since UPVOTEs and DOWNVOTEs are stored in a single NewsVote table,
-      // Prisma's native relational _count sorts by total vote volume at the DB level.
       orderBy = { votes: { _count: finalSortOrder } };
     } else {
       orderBy = { [finalSortBy]: finalSortOrder };
@@ -84,7 +80,7 @@ export class NewsService {
           },
           category: true,
           departments: { select: { id: true, name: true } },
-          votes: { select: { voteType: true } },
+          votes: { select: { voteType: true, userId: true, newsId: true } },
           _count: { select: { comments: true } },
         },
       }),
@@ -94,9 +90,15 @@ export class NewsService {
     const mappedData = articles.map((article) => {
       const upvotes = article.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
       const downvotes = article.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
+      const currentUserVotes = article.votes.filter((v) => v.userId === currentUserId);
+      
       const { votes, ...rest } = article;
+      
       return { 
-        ...rest, 
+        ...rest,
+        votes: currentUserVotes,
+        upvotes,
+        downvotes,
         _count: {
           comments: article._count.comments,
           likes: upvotes,
