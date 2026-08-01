@@ -133,6 +133,7 @@ src/
     dto/
       reset-password.dto.ts
       update-user.dto.ts
+    avatars.controller.ts
     users.controller.spec.ts
     users.controller.ts
     users.module.ts
@@ -147,6 +148,22 @@ test/
   app.e2e-spec.ts
   jest-e2e.json
 uploads/
+  avatars/
+    0f428ce2-b041-41ac-bae0-49710bb31666.jpg
+    1a7932d9-5654-4e1a-9300-df52b0e8a66d.jpg
+    2d561f7a-e61e-4a2d-8ddb-b128ce04e9a6.jpg
+    3a52c425-b509-449c-b1af-592c16cbe97c.jpg
+    3ca83e33-9376-4395-8893-b2a09a357b54.jpg
+    69c6b831-655b-47f4-a031-227869dad5ae.jpg
+    73f8b2de-1587-4e71-a05c-6ae488f09877.jpg
+    9ee2bbce-e44c-420f-8660-ee826aa2d764.jpg
+    a841772b-890b-4cfc-ac8a-a01147d9511f.jpg
+    af03ed46-7a05-4d93-8ba5-baf5de85be0b.jpg
+    b4001433-def6-4675-9379-9201c4c95357.jpg
+    bd788f60-dd11-4432-baa4-519308cbcb96.jpg
+    cec1ff83-ac5c-49d4-8198-a6c256a2f6ff.jpg
+    d3a8c4bd-c6dc-41be-9ed2-79cb2e2df0af.jpg
+    f332a4eb-c02b-44d8-84f2-0f539b2cc16f.jpg
   chat/
     ecedc763-affd-4c47-bfa0-4154b5bee318.webp
   news/
@@ -170,6 +187,41 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="src/users/avatars.controller.ts">
+import { Controller, Get, Param, Res, NotFoundException } from '@nestjs/common';
+import type { Response } from 'express';
+import { createReadStream } from 'fs';
+import { access } from 'fs/promises';
+import { join } from 'path';
+
+@Controller('uploads/avatars')
+export class AvatarsController {
+  @Get(':filename')
+  async serveAvatar(@Param('filename') filename: string, @Res() res: Response) {
+    // Basic Path Traversal protection
+    if (filename.includes('..') || filename.includes('/')) {
+      throw new NotFoundException('Invalid file path');
+    }
+
+    const filePath = join(process.cwd(), 'uploads', 'avatars', filename);
+
+    try {
+      await access(filePath);
+    } catch (error) {
+      throw new NotFoundException('Avatar not found');
+    }
+
+    // Determine basic content type
+    if (filename.endsWith('.png')) res.setHeader('Content-Type', 'image/png');
+    else if (filename.endsWith('.webp')) res.setHeader('Content-Type', 'image/webp');
+    else res.setHeader('Content-Type', 'image/jpeg');
+
+    const fileStream = createReadStream(filePath);
+    fileStream.pipe(res);
+  }
+}
+</file>
 
 <file path="src/auth/decorators/roles.decorator.ts">
 import { SetMetadata } from '@nestjs/common';
@@ -303,36 +355,6 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 });
-</file>
-
-<file path="src/chat/dto/chat-message.dto.ts">
-import { IsString, IsNotEmpty, IsUUID } from 'class-validator';
-
-export class SendMessageDto {
-  @IsUUID()
-  @IsNotEmpty()
-  groupId!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  content!: string;
-}
-
-export class EditMessageDto {
-  @IsUUID()
-  @IsNotEmpty()
-  messageId!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  newContent!: string;
-}
-
-export class DeleteMessageDto {
-  @IsUUID()
-  @IsNotEmpty()
-  messageId!: string;
-}
 </file>
 
 <file path="src/chat/chat.controller.spec.ts">
@@ -1313,10 +1335,11 @@ describe('UsersController', () => {
 import { Module } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
+import { AvatarsController } from './avatars.controller';
 
 @Module({
   providers: [UsersService],
-  controllers: [UsersController]
+  controllers: [UsersController, AvatarsController]
 })
 export class UsersModule {}
 </file>
@@ -1562,39 +1585,12 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
-</file>
+
 
 <file path="tsconfig.build.json">
 {
   "extends": "./tsconfig.json",
   "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
-}
-</file>
-
-<file path="tsconfig.json">
-{
-  "compilerOptions": {
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "resolvePackageJsonExports": true,
-    "esModuleInterop": true,
-    "isolatedModules": true,
-    "declaration": true,
-    "removeComments": true,
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
-    "allowSyntheticDefaultImports": true,
-    "target": "ES2023",
-    "sourceMap": true,
-    "outDir": "./dist",
-    "incremental": true,
-    "skipLibCheck": true,
-    "strictNullChecks": true,
-    "forceConsistentCasingInFileNames": true,
-    "noImplicitAny": false,
-    "strictBindCallApply": false,
-    "noFallthroughCasesInSwitch": false
-  }
 }
 </file>
 
@@ -1742,6 +1738,46 @@ export class WsJwtGuard implements CanActivate {
 }
 </file>
 
+<file path="src/chat/dto/chat-message.dto.ts">
+import { IsString, IsNotEmpty, IsUUID } from 'class-validator';
+
+export class SendMessageDto {
+  @IsUUID()
+  @IsNotEmpty()
+  groupId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  content!: string;
+}
+
+export class EditMessageDto {
+  @IsUUID()
+  @IsNotEmpty()
+  messageId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  newContent!: string;
+}
+
+export class DeleteMessageDto {
+  @IsUUID()
+  @IsNotEmpty()
+  messageId!: string;
+}
+
+export class MarkAsReadDto {
+  @IsUUID('4')
+  @IsNotEmpty()
+  groupId!: string;
+
+  @IsString({ each: true })
+  @IsNotEmpty()
+  messageIds!: string[];
+}
+</file>
+
 <file path="src/chat/dto/create-group.dto.ts">
 import { IsString, IsNotEmpty, IsArray, IsUUID, IsOptional, IsUrl } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -1773,91 +1809,6 @@ export class CreateGroupDto {
   @IsUUID('4', { each: true })
   @IsOptional()
   adminIds?: string[];
-}
-</file>
-
-<file path="src/chat/chat.gateway.ts">
-import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-  ConnectedSocket,
-  MessageBody,
-} from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
-import { UseGuards } from '@nestjs/common';
-import { ChatService } from './chat.service';
-import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
-import { SendMessageDto, EditMessageDto, DeleteMessageDto } from './dto/chat-message.dto';
-
-@WebSocketGateway({
-  cors: { origin: '*' }, 
-  namespace: '/chat',
-})
-@UseGuards(WsJwtGuard)
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server!: Server;
-
-  constructor(private readonly chatService: ChatService) {}
-
-  handleConnection(client: Socket) {
-    console.log(`Client connected: ${client.id}`);
-  }
-
-  handleDisconnect(client: Socket) {
-    console.log(`Client disconnected: ${client.id}`);
-  }
-
-  @SubscribeMessage('joinRoom')
-  async handleJoinRoom(@ConnectedSocket() client: Socket, @MessageBody('groupId') groupId: string) {
-    const user = client.data.user; 
-    try {
-      await this.chatService.getGroupMessages(groupId, user);
-      client.join(groupId);
-      return { status: 'ok', event: 'joined', groupId };
-    } catch (error) {
-      return { status: 'error', message: 'Access denied' };
-    }
-  }
-
-  @SubscribeMessage('sendMessage')
-  async handleSendMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: SendMessageDto) {
-    const user = client.data.user;
-    try {
-      const message = await this.chatService.saveMessage(dto.groupId, user, dto.content);
-      this.server.to(dto.groupId).emit('newMessage', message);
-      return { status: 'ok' };
-    } catch (error: any) {
-      return { status: 'error', message: error.message };
-    }
-  }
-
-  @SubscribeMessage('editMessage')
-  async handleEditMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: EditMessageDto) {
-    const user = client.data.user;
-    try {
-      const updatedMessage = await this.chatService.editMessage(dto.messageId, user, dto.newContent);
-      this.server.to(updatedMessage.groupId).emit('messageUpdated', updatedMessage);
-      return { status: 'ok' };
-    } catch (error: any) {
-      return { status: 'error', message: error.message };
-    }
-  }
-
-  @SubscribeMessage('deleteMessage')
-  async handleDeleteMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: DeleteMessageDto) {
-    const user = client.data.user;
-    try {
-      const deletedMessage = await this.chatService.deleteMessage(dto.messageId, user);
-      this.server.to(deletedMessage.groupId).emit('messageDeleted', deletedMessage);
-      return { status: 'ok' };
-    } catch (error: any) {
-      return { status: 'error', message: error.message };
-    }
-  }
 }
 </file>
 
@@ -1996,154 +1947,6 @@ import { PollsCronService } from './polls.cron';
   controllers: [PollsController]
 })
 export class PollsModule {}
-</file>
-
-<file path="src/users/users.controller.ts">
-import { Controller, Get, Patch, Delete, Post, Body, Param, Query, UseGuards, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
-import { UsersService } from './users.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { Role } from '@prisma/client';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
-
-@ApiTags('Users')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('users')
-export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
-
-  @ApiOperation({ summary: 'Отримати список користувачів з пагінацією та пошуком (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Get()
-  findAll(
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
-    @Query('search') search?: string,
-  ) {
-    return this.usersService.findAll(page, limit, search);
-  }
-
-  @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
-  }
-
-  @ApiOperation({ summary: 'Повністю видалити користувача з бази даних (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(id);
-  }
-
-  @ApiOperation({ summary: 'Скинути пароль користувача вручну (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Post(':id/reset-password')
-  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
-    return this.usersService.resetPassword(id, dto.newPassword);
-  }
-}
-</file>
-
-<file path="src/users/users.service.ts">
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
-import { UpdateUserDto } from './dto/update-user.dto';
-import * as bcrypt from 'bcrypt';
-
-@Injectable()
-export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async findAll(page: number, limit: number, search?: string) {
-    const skip = (page - 1) * limit;
-    
-    const where: Prisma.UserWhereInput = {};
-    if (search) {
-      where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    const [data, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where,
-        skip,
-        take: limit,
-        select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          role: true,
-          avatarUrl: true,
-          isActive: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.user.count({ where }),
-    ]);
-
-    return {
-      data,
-      meta: {
-        total,
-        page,
-        lastPage: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  async update(id: string, dto: UpdateUserDto) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Користувача не знайдено');
-
-    return this.prisma.user.update({
-      where: { id },
-      data: dto,
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        isActive: true,
-      },
-    });
-  }
-
-  async remove(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Користувача не знайдено');
-
-    await this.prisma.user.delete({ where: { id } });
-    return { message: 'Користувача успішно видалено з системи' };
-  }
-
-  async resetPassword(id: string, newPassword: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Користувача не знайдено');
-
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
-
-    await this.prisma.user.update({
-      where: { id },
-      data: { passwordHash: hashedPassword },
-    });
-
-    return { message: 'Пароль успішно скинуто' };
-  }
-}
 </file>
 
 <file path="src/app.controller.ts">
@@ -2296,6 +2099,34 @@ volumes:
   pgdata:
 </file>
 
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "resolvePackageJsonExports": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2023",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": true,
+    "forceConsistentCasingInFileNames": true,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "noFallthroughCasesInSwitch": false,
+    "types": ["node", "jest"]
+  }
+}
+</file>
+
 <file path="src/chat/dto/manage-member.dto.ts">
 import { IsNotEmpty, IsUUID, IsBoolean, IsOptional, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -2339,6 +2170,536 @@ export class UpdateMemberRoleDto {
   @IsBoolean()
   @IsNotEmpty()
   isAdmin!: boolean;
+}
+</file>
+
+<file path="src/chat/chat.gateway.ts">
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  ConnectedSocket,
+  MessageBody,
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { UseGuards } from '@nestjs/common';
+import { ChatService } from './chat.service';
+import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
+import { SendMessageDto, EditMessageDto, DeleteMessageDto, MarkAsReadDto } from './dto/chat-message.dto';
+
+@WebSocketGateway({
+  cors: { origin: '*' }, 
+  namespace: '/chat',
+})
+@UseGuards(WsJwtGuard)
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer()
+  server!: Server;
+
+  constructor(private readonly chatService: ChatService) {}
+
+  handleConnection(client: Socket) {
+    console.log(`Client connected: ${client.id}`);
+  }
+
+  handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+  }
+
+  @SubscribeMessage('joinRoom')
+  async handleJoinRoom(@ConnectedSocket() client: Socket, @MessageBody('groupId') groupId: string) {
+    const user = client.data.user; 
+    try {
+      await this.chatService.getGroupMessages(groupId, user);
+      client.join(groupId);
+      return { status: 'ok', event: 'joined', groupId };
+    } catch (error) {
+      return { status: 'error', message: 'Access denied' };
+    }
+  }
+
+  @SubscribeMessage('sendMessage')
+  async handleSendMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: SendMessageDto) {
+    const user = client.data.user;
+    try {
+      const message = await this.chatService.saveMessage(dto.groupId, user, dto.content);
+      this.server.to(dto.groupId).emit('newMessage', message);
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('editMessage')
+  async handleEditMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: EditMessageDto) {
+    const user = client.data.user;
+    try {
+      const updatedMessage = await this.chatService.editMessage(dto.messageId, user, dto.newContent);
+      this.server.to(updatedMessage.groupId).emit('messageUpdated', updatedMessage);
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('deleteMessage')
+  async handleDeleteMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: DeleteMessageDto) {
+    const user = client.data.user;
+    try {
+      const deletedMessage = await this.chatService.deleteMessage(dto.messageId, user);
+      this.server.to(deletedMessage.groupId).emit('messageDeleted', deletedMessage);
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('markAsRead')
+  async handleMarkAsRead(@ConnectedSocket() client: Socket, @MessageBody() dto: MarkAsReadDto) {
+    const user = client.data.user;
+    try {
+      await this.chatService.markMessagesAsRead(dto.groupId, user.sub, dto.messageIds);
+      
+      this.server.to(dto.groupId).emit('messagesRead', {
+        groupId: dto.groupId,
+        messageIds: dto.messageIds,
+        readByUserId: user.sub,
+      });
+      
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+}
+</file>
+
+<file path="src/polls/dto/create-poll.dto.ts">
+import { IsString, IsNotEmpty, IsUUID, IsArray, ArrayMinSize, IsOptional, IsEnum, IsDateString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PollStatus } from '@prisma/client';
+
+export class CreatePollDto {
+  @ApiProperty({ description: 'Тема опитування', example: 'Оптимальний графік чергувань?' })
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @ApiPropertyOptional({ description: 'Детальний опис або правила опитування' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Статус публікації', enum: PollStatus, default: PollStatus.PUBLISHED })
+  @IsEnum(PollStatus)
+  @IsOptional()
+  status?: PollStatus;
+
+  @ApiPropertyOptional({ description: 'Масив ID підрозділів (залишіть порожнім для загального опитування)', type: [String] })
+  @IsArray()
+  @IsUUID('all', { each: true })
+  @IsOptional()
+  departmentIds?: string[];
+
+  @ApiProperty({ 
+    description: 'Варіанти відповідей (мінімум 2)', 
+    type: [String], 
+    example: ['Доба через дві', 'Доба через три'] 
+  })
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMinSize(2)
+  options!: string[];
+
+  @ApiPropertyOptional({ description: 'Час завершення опитування', example: '2026-12-31T23:59:59Z' })
+  @IsOptional()
+  @IsDateString({}, { message: 'expiresAt має бути коректною датою у форматі ISO 8601' })
+  expiresAt?: string;
+
+}
+</file>
+
+<file path="src/polls/dto/update-poll.dto.ts">
+import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsDateString, IsOptional } from 'class-validator';
+import { CreatePollDto } from './create-poll.dto';
+
+export class UpdatePollDto extends PartialType(CreatePollDto) {
+    @ApiPropertyOptional({ description: 'Час завершення опитування', example: '2026-12-31T23:59:59Z' })
+  @IsOptional()
+  @IsDateString({}, { message: 'expiresAt має бути коректною датою у форматі ISO 8601' })
+  expiresAt?: string;
+}
+</file>
+
+<file path="src/users/users.controller.ts">
+import { 
+  Controller, 
+  Get, 
+  Patch, 
+  Delete, 
+  Post, 
+  Body, 
+  Param, 
+  Query, 
+  UseGuards, 
+  ParseIntPipe, 
+  DefaultValuePipe, 
+  Req, 
+  UseInterceptors, 
+  UploadedFile, 
+  ParseFilePipe, 
+  MaxFileSizeValidator, 
+  FileTypeValidator 
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Request } from 'express';
+import { UsersService } from './users.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Role } from '@prisma/client';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+
+interface RequestWithUser extends Request {
+  user: {
+    sub: string;
+    email: string;
+    role: Role;
+  };
+}
+
+@ApiTags('Users')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
+  @ApiOperation({ summary: 'Отримати список користувачів з пагінацією та пошуком (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Get()
+  findAll(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('search') search?: string,
+  ) {
+    return this.usersService.findAll(page, limit, search);
+  }
+
+  @ApiOperation({ summary: 'Отримати профіль поточного користувача' })
+  @Get('me')
+  async getMe(@Req() req: RequestWithUser) {
+    return this.usersService.getMe(req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Оновити аватар поточного користувача' })
+  @Patch('me/avatar')
+  @UseInterceptors(FileInterceptor('file'))
+  async updateAvatar(
+    @Req() req: RequestWithUser,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
+          new FileTypeValidator({ fileType: '.(png|jpeg|jpg|webp)' }),
+        ],
+      }),
+    ) file: Express.Multer.File,
+  ) {
+    return this.usersService.updateAvatar(req.user.sub, file);
+  }
+
+  @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+    return this.usersService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Повністю видалити користувача з бази даних (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.usersService.remove(id);
+  }
+
+  @ApiOperation({ summary: 'Скинути пароль користувача вручну (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Post(':id/reset-password')
+  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
+    return this.usersService.resetPassword(id, dto.newPassword);
+  }
+}
+</file>
+
+<file path="src/users/users.service.ts">
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
+import * as fs from 'fs/promises';
+import { join, extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { UpdateUserDto } from './dto/update-user.dto';
+import * as bcrypt from 'bcrypt';
+
+@Injectable()
+export class UsersService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll(page: number, limit: number, search?: string) {
+    const skip = (page - 1) * limit;
+    
+    const where: Prisma.UserWhereInput = {};
+    if (search) {
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          avatarUrl: true,
+          isActive: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        lastPage: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async update(id: string, dto: UpdateUserDto) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Користувача не знайдено');
+
+    return this.prisma.user.update({
+      where: { id },
+      data: dto,
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        isActive: true,
+      },
+    });
+  }
+
+  async remove(id: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Користувача не знайдено');
+
+    await this.prisma.user.delete({ where: { id } });
+    return { message: 'Користувача успішно видалено з системи' };
+  }
+
+  async resetPassword(id: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Користувача не знайдено');
+
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    await this.prisma.user.update({
+      where: { id },
+      data: { passwordHash: hashedPassword },
+    });
+
+    return { message: 'Пароль успішно скинуто' };
+  }
+
+  async getMe(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const { passwordHash, ...safeUser } = user;
+    return safeUser;
+  }
+
+  async updateAvatar(userId: string, file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+
+    const filename = `${uuidv4()}${extname(file.originalname)}`;
+    const uploadDir = join(process.cwd(), 'uploads', 'avatars');
+    const uploadPath = join(uploadDir, filename);
+
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(uploadPath, file.buffer);
+
+    const avatarUrl = `/uploads/avatars/${filename}`;
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl },
+    });
+
+    return { avatarUrl };
+  }
+}
+</file>
+
+<file path="src/main.ts">
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ValidationPipe } from '@nestjs/common';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+// Налаштування CORS для підключення React адмін-панелі
+  app.enableCors({
+    origin: 'http://localhost:5173',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+  });
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+    }),
+  );
+
+  // Налаштування Swagger для тестування API
+  const config = new DocumentBuilder()
+    .setTitle('DSNS Hub API')
+    .setDescription('Тестування відомчої системи ДСНС')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, document);
+
+  await app.listen(3000);
+}
+bootstrap();
+</file>
+
+<file path="src/auth/auth.service.ts">
+import {
+  Injectable,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { JwtService } from '@nestjs/jwt';
+import { RegisterDto, LoginDto } from './dto/auth.dto';
+import * as bcrypt from 'bcrypt';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+  ) {}
+
+  async register(dto: RegisterDto) {
+    // 1. Критична перевірка email-адреси
+    if (!dto.email.endsWith('@dsns.gov.ua')) {
+      throw new ForbiddenException(
+        'Реєстрація дозволена лише для співробітників з доменом @dsns.gov.ua',
+      );
+    }
+
+    // 2. Перевірка, чи не існує вже такого користувача
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    
+    if (existingUser) {
+      throw new ForbiddenException('Користувач з таким email вже існує');
+    }
+
+    // 3. Хешування пароля за допомогою bcrypt
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
+
+    // 4. Збереження в базу даних
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        passwordHash: hashedPassword,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+      },
+    });
+
+    return {
+      message: 'Користувача успішно зареєстровано',
+      userId: user.id,
+    };
+  }
+
+  async login(dto: LoginDto) {
+    // 1. Шукаємо користувача
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Невірний email або пароль');
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException('Ваш обліковий запис заблоковано');
+    }
+
+    // 2. Перевіряємо хеш пароля
+    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
+    
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Невірний email або пароль');
+    }
+
+    // 3. Генеруємо JWT токен
+    const payload = { sub: user.id, email: user.email, role: user.role };
+    
+    return {
+      accessToken: await this.jwtService.signAsync(payload),
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        avatarUrl: user.avatarUrl,
+      },
+    };
+  }
 }
 </file>
 
@@ -2388,10 +2749,15 @@ export class ChatController {
     return this.chatService.getUserGroups(req.user.sub);
   }
 
-  @ApiOperation({ summary: 'Отримати історію повідомлень кімнати' })
+  @ApiOperation({ summary: 'Отримати історію повідомлень кімнати з пагінацією' })
   @Get('groups/:groupId/messages')
-  getGroupMessages(@Param('groupId') groupId: string, @Req() req: RequestWithUser) {
-    return this.chatService.getGroupMessages(groupId, req.user);
+  getGroupMessages(
+    @Param('groupId') groupId: string, 
+    @Req() req: RequestWithUser,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.chatService.getGroupMessages(groupId, req.user, page, limit);
   }
 
 @ApiOperation({ summary: 'Get list of group members' })
@@ -2543,31 +2909,85 @@ export class ChatService {
   }
 
   async getUserGroups(userId: string) {
-    return this.prisma.chatGroup.findMany({
+    const groups = await this.prisma.chatGroup.findMany({
       where: { members: { some: { userId } } },
       include: {
         department: { select: { id: true, name: true } },
         members: { where: { userId }, select: { isPinned: true, pinOrder: true, isAdmin: true } },
-        _count: { select: { members: true } },
-        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+        _count: { 
+          select: { 
+            members: true,
+            messages: {
+              where: {
+                senderId: { not: userId },
+                NOT: { readReceipts: { some: { userId } } }
+              }
+            }
+          } 
+        },
+        messages: { 
+          orderBy: { createdAt: 'desc' }, 
+          take: 1,
+          include: { sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } }
+        },
       },
+    });
+
+    return groups.map((g) => {
+      const { _count, ...rest } = g;
+      return {
+        ...rest,
+        unreadCount: _count.messages,
+        _count: { members: _count.members }
+      };
+    }).sort((a, b) => {
+      const dateA = a.messages[0]?.createdAt.getTime() || a.createdAt.getTime();
+      const dateB = b.messages[0]?.createdAt.getTime() || b.createdAt.getTime();
+      return dateB - dateA;
     });
   }
 
-  async getGroupMessages(groupId: string, user: { sub: string; role: Role }) {
+  async getGroupMessages(groupId: string, user: { sub: string; role: Role }, page: number = 1, limit: number = 20) {
     await this.verifyMembership(groupId, user);
-    const messages = await this.prisma.chatMessage.findMany({
-      where: { groupId },
-      orderBy: { createdAt: 'asc' },
-      include: { sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
-    });
+    const skip = (page - 1) * limit;
+
+    const [messages, total] = await Promise.all([
+      this.prisma.chatMessage.findMany({
+        where: { groupId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: { 
+          sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          readReceipts: { select: { userId: true, readAt: true } }
+        },
+      }),
+      this.prisma.chatMessage.count({ where: { groupId } })
+    ]);
 
     return {
-      data: messages,
+      data: messages.reverse(),
       meta: {
-        total: messages.length,
+        total,
+        page,
+        lastPage: Math.ceil(total / limit),
+        limit
       },
     };
+  }
+
+  async markMessagesAsRead(groupId: string, userId: string, messageIds: string[]) {
+    await this.verifyMembership(groupId, { sub: userId, role: Role.USER });
+
+    const data = messageIds.map(messageId => ({
+      messageId,
+      userId,
+    }));
+
+    await this.prisma.messageReadReceipt.createMany({
+      data,
+      skipDuplicates: true,
+    });
   }
 
   async getGroupMembers(groupId: string, user: { sub: string; role: Role }) {
@@ -2792,196 +3212,6 @@ export class ChatService {
 }
 </file>
 
-<file path="src/polls/dto/create-poll.dto.ts">
-import { IsString, IsNotEmpty, IsUUID, IsArray, ArrayMinSize, IsOptional, IsEnum, IsDateString } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PollStatus } from '@prisma/client';
-
-export class CreatePollDto {
-  @ApiProperty({ description: 'Тема опитування', example: 'Оптимальний графік чергувань?' })
-  @IsString()
-  @IsNotEmpty()
-  title!: string;
-
-  @ApiPropertyOptional({ description: 'Детальний опис або правила опитування' })
-  @IsString()
-  @IsOptional()
-  description?: string;
-
-  @ApiPropertyOptional({ description: 'Статус публікації', enum: PollStatus, default: PollStatus.PUBLISHED })
-  @IsEnum(PollStatus)
-  @IsOptional()
-  status?: PollStatus;
-
-  @ApiPropertyOptional({ description: 'Масив ID підрозділів (залишіть порожнім для загального опитування)', type: [String] })
-  @IsArray()
-  @IsUUID('all', { each: true })
-  @IsOptional()
-  departmentIds?: string[];
-
-  @ApiProperty({ 
-    description: 'Варіанти відповідей (мінімум 2)', 
-    type: [String], 
-    example: ['Доба через дві', 'Доба через три'] 
-  })
-  @IsArray()
-  @IsString({ each: true })
-  @ArrayMinSize(2)
-  options!: string[];
-
-  @ApiPropertyOptional({ description: 'Час завершення опитування', example: '2026-12-31T23:59:59Z' })
-  @IsOptional()
-  @IsDateString({}, { message: 'expiresAt має бути коректною датою у форматі ISO 8601' })
-  expiresAt?: string;
-
-}
-</file>
-
-<file path="src/polls/dto/update-poll.dto.ts">
-import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsOptional } from 'class-validator';
-import { CreatePollDto } from './create-poll.dto';
-
-export class UpdatePollDto extends PartialType(CreatePollDto) {
-    @ApiPropertyOptional({ description: 'Час завершення опитування', example: '2026-12-31T23:59:59Z' })
-  @IsOptional()
-  @IsDateString({}, { message: 'expiresAt має бути коректною датою у форматі ISO 8601' })
-  expiresAt?: string;
-}
-</file>
-
-<file path="src/main.ts">
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ValidationPipe } from '@nestjs/common';
-
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-
-// Налаштування CORS для підключення React адмін-панелі
-  app.enableCors({
-    origin: 'http://localhost:5173',
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true,
-  });
-
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-    }),
-  );
-
-  // Налаштування Swagger для тестування API
-  const config = new DocumentBuilder()
-    .setTitle('DSNS Hub API')
-    .setDescription('Тестування відомчої системи ДСНС')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
-
-  await app.listen(3000);
-}
-bootstrap();
-</file>
-
-<file path="src/auth/auth.service.ts">
-import {
-  Injectable,
-  ForbiddenException,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { JwtService } from '@nestjs/jwt';
-import { RegisterDto, LoginDto } from './dto/auth.dto';
-import * as bcrypt from 'bcrypt';
-
-@Injectable()
-export class AuthService {
-  constructor(
-    private prisma: PrismaService,
-    private jwtService: JwtService,
-  ) {}
-
-  async register(dto: RegisterDto) {
-    // 1. Критична перевірка email-адреси
-    if (!dto.email.endsWith('@dsns.gov.ua')) {
-      throw new ForbiddenException(
-        'Реєстрація дозволена лише для співробітників з доменом @dsns.gov.ua',
-      );
-    }
-
-    // 2. Перевірка, чи не існує вже такого користувача
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-    
-    if (existingUser) {
-      throw new ForbiddenException('Користувач з таким email вже існує');
-    }
-
-    // 3. Хешування пароля за допомогою bcrypt
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
-
-    // 4. Збереження в базу даних
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash: hashedPassword,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-      },
-    });
-
-    return {
-      message: 'Користувача успішно зареєстровано',
-      userId: user.id,
-    };
-  }
-
-  async login(dto: LoginDto) {
-    // 1. Шукаємо користувача
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Невірний email або пароль');
-    }
-
-    if (!user.isActive) {
-      throw new ForbiddenException('Ваш обліковий запис заблоковано');
-    }
-
-    // 2. Перевіряємо хеш пароля
-    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
-    
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Невірний email або пароль');
-    }
-
-    // 3. Генеруємо JWT токен
-    const payload = { sub: user.id, email: user.email, role: user.role };
-    
-    return {
-      accessToken: await this.jwtService.signAsync(payload),
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        avatarUrl: user.avatarUrl,
-      },
-    };
-  }
-}
-</file>
-
 <file path="src/news/dto/create-news.dto.ts">
 import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -3069,6 +3299,7 @@ export class PollsController {
   @ApiOperation({ summary: 'Отримати список опитувань (із фільтрацією, сортуванням та пагінацією)' })
   @Get()
   findAll(
+    @Req() req: RequestWithUser,
     @Query('departmentId') departmentId?: string,
     @Query('status') status?: PollStatus,
     @Query('sortBy') sortBy?: 'createdAt' | 'votes' | 'author',
@@ -3076,13 +3307,13 @@ export class PollsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.pollsService.findAll(departmentId, status, sortBy, sortOrder, page, limit);
+    return this.pollsService.findAll(req.user.sub, departmentId, status, sortBy, sortOrder, page, limit);
   }
 
   @ApiOperation({ summary: 'Отримати конкретне опитування' })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.pollsService.findOne(id);
+  findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
+    return this.pollsService.findOne(id, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Проголосувати в опитуванні' })
@@ -3147,6 +3378,7 @@ export class PollsService {
   }
 
   async findAll(
+    currentUserId: string,
     departmentId?: string,
     status?: PollStatus,
     sortBy?: 'createdAt' | 'votes' | 'author',
@@ -3161,8 +3393,8 @@ export class PollsService {
 
     if (departmentId) {
       whereClause.OR = [
-        { departments: { some: { id: departmentId } } }, // Цільові опитування для підрозділу
-        { departments: { none: {} } },                   // Загальні опитування (для всіх)
+        { departments: { some: { id: departmentId } } },
+        { departments: { none: {} } },
       ];
     }
 
@@ -3190,6 +3422,10 @@ export class PollsService {
           orderBy: { orderIndex: 'asc' },
           include: {
             _count: { select: { votes: true } },
+            votes: {
+              where: { userId: currentUserId },
+              select: { optionId: true },
+            },
           },
         },
       },
@@ -3197,10 +3433,25 @@ export class PollsService {
 
     const pollsWithTotal = polls.map((poll) => {
       const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
-      return { ...poll, totalVotes };
+      
+      let userVotedOptionId: string | null = null;
+      for (const opt of poll.options) {
+        if (opt.votes && opt.votes.length > 0) {
+          userVotedOptionId = opt.id;
+          break;
+        }
+      }
+
+      const optionsCleaned = poll.options.map(({ votes, ...optRest }) => optRest);
+
+      return { 
+        ...poll, 
+        options: optionsCleaned, 
+        totalVotes, 
+        userVotedOptionId 
+      };
     });
 
-    // Сортування у пам'яті для обчислених або реляційних полів
     if (sortBy === 'votes') {
       pollsWithTotal.sort((a, b) => {
         return sortOrder === 'asc' ? a.totalVotes - b.totalVotes : b.totalVotes - a.totalVotes;
@@ -3229,7 +3480,7 @@ export class PollsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, currentUserId: string) {
     const poll = await this.prisma.poll.findUnique({
       where: { id },
       include: {
@@ -3247,6 +3498,10 @@ export class PollsService {
           orderBy: { orderIndex: 'asc' },
           include: {
             _count: { select: { votes: true } },
+            votes: {
+              where: { userId: currentUserId },
+              select: { optionId: true },
+            },
           },
         },
       },
@@ -3257,11 +3512,26 @@ export class PollsService {
     }
 
     const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
-    return { ...poll, totalVotes };
+    
+    let userVotedOptionId: string | null = null;
+    for (const opt of poll.options) {
+      if (opt.votes && opt.votes.length > 0) {
+        userVotedOptionId = opt.id;
+        break;
+      }
+    }
+
+    const optionsCleaned = poll.options.map(({ votes, ...optRest }) => optRest);
+
+    return { 
+      ...poll, 
+      options: optionsCleaned, 
+      totalVotes, 
+      userVotedOptionId 
+    };
   }
 
   async vote(pollId: string, userId: string, optionId: string) {
-    // 1. Перевіряємо чи існує опція, чи належить вона саме цьому опитуванню, та завантажуємо статус опитування
     const option = await this.prisma.pollOption.findFirst({
       where: { id: optionId, pollId },
       include: { poll: true },
@@ -3271,17 +3541,14 @@ export class PollsService {
       throw new BadRequestException('Некоректний варіант відповіді для цього опитування');
     }
 
-    // Захист: заборона голосування за чернетки
     if (option.poll.status === PollStatus.DRAFT) {
       throw new BadRequestException('Неможливо проголосувати в опитуванні, яке знаходиться в статусі чернетки (DRAFT).');
     }
 
-    // Захист: перевірка терміну дії (Expiration)
     if (option.poll.expiresAt && new Date() > option.poll.expiresAt) {
       throw new BadRequestException('Час голосування вичерпано.');
     }
 
-    // 2. Шукаємо, чи голосував вже цей користувач у ЦЬОМУ опитуванні (за будь-яку опцію)
     const existingVote = await this.prisma.pollVote.findFirst({
       where: {
         userId,
@@ -3291,29 +3558,26 @@ export class PollsService {
 
     if (existingVote) {
       if (existingVote.optionId === optionId) {
-        // Знімаємо голос, якщо користувач натиснув на той самий варіант
         await this.prisma.pollVote.delete({
           where: { userId_optionId: { userId, optionId: existingVote.optionId } },
         });
-        return { message: 'Голос знято' };
+        return this.findOne(pollId, userId);
       } else {
-        // Змінюємо голос
         await this.prisma.pollVote.delete({
           where: { userId_optionId: { userId, optionId: existingVote.optionId } },
         });
         await this.prisma.pollVote.create({
           data: { userId, optionId },
         });
-        return { message: 'Голос змінено' };
+        return this.findOne(pollId, userId);
       }
     }
 
-    // 3. Якщо голосу не було
     await this.prisma.pollVote.create({
       data: { userId, optionId },
     });
 
-    return { message: 'Голос зараховано' };
+    return this.findOne(pollId, userId);
   }
 
   async update(id: string, dto: UpdatePollDto) {
@@ -3467,6 +3731,7 @@ export class PollsService {
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/platform-socket.io": "^11.1.27",
     "@nestjs/schedule": "^6.1.3",
+    "@nestjs/serve-static": "^5.0.5",
     "@nestjs/swagger": "^11.4.4",
     "@nestjs/websockets": "^11.1.27",
     "@prisma/client": "^6.19.3",
@@ -3526,6 +3791,48 @@ export class PollsService {
     "testEnvironment": "node"
   }
 }
+</file>
+
+<file path="src/app.module.ts">
+import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
+import { APP_FILTER } from '@nestjs/core';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
+import { NewsModule } from './news/news.module';
+import { DepartmentsModule } from './departments/departments.module';
+import { DocumentsModule } from './documents/documents.module';
+import { ProjectsModule } from './projects/projects.module';
+import { PollsModule } from './polls/polls.module';
+import { ChatModule } from './chat/chat.module';
+import { UsersModule } from './users/users.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+
+@Module({
+  imports: [
+    ScheduleModule.forRoot(),
+    PrismaModule,
+    AuthModule,
+    NewsModule, 
+    DepartmentsModule, 
+    DocumentsModule, 
+    ProjectsModule, 
+    PollsModule, 
+    ChatModule, 
+    UsersModule
+  ],
+  controllers: [AppController],
+  providers: [
+    AppService,
+    {
+      provide: APP_FILTER,
+      useClass: AllExceptionsFilter,
+    },
+  ],
+})
+export class AppModule {}
 </file>
 
 <file path="src/news/news.controller.ts">
@@ -3667,6 +3974,7 @@ export class NewsController {
   @ApiOperation({ summary: 'Отримати стрічку новин з пагінацією та фільтрами' })
   @Get()
   findAll(
+    @Req() req: RequestWithUser,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @Query('categoryId') categoryId?: string,
@@ -3675,7 +3983,16 @@ export class NewsController {
     @Query('sortOrder') sortOrder?: string,
     @Query('departmentId') departmentId?: string,
   ) {
-    return this.newsService.findAll(page, limit, categoryId, status, sortBy, sortOrder, departmentId);
+    return this.newsService.findAll(
+      req.user.sub,
+      page,
+      limit,
+      categoryId,
+      status,
+      sortBy,
+      sortOrder,
+      departmentId,
+    );
   }
 
   @ApiOperation({ summary: 'Отримати всі категорії новин' })
@@ -3771,48 +4088,6 @@ export class NewsController {
 }
 </file>
 
-<file path="src/app.module.ts">
-import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
-import { APP_FILTER } from '@nestjs/core';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { PrismaModule } from './prisma/prisma.module';
-import { AuthModule } from './auth/auth.module';
-import { NewsModule } from './news/news.module';
-import { DepartmentsModule } from './departments/departments.module';
-import { DocumentsModule } from './documents/documents.module';
-import { ProjectsModule } from './projects/projects.module';
-import { PollsModule } from './polls/polls.module';
-import { ChatModule } from './chat/chat.module';
-import { UsersModule } from './users/users.module';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-
-@Module({
-  imports: [
-    ScheduleModule.forRoot(),
-    PrismaModule, 
-    AuthModule, 
-    NewsModule, 
-    DepartmentsModule, 
-    DocumentsModule, 
-    ProjectsModule, 
-    PollsModule, 
-    ChatModule, 
-    UsersModule
-  ],
-  controllers: [AppController],
-  providers: [
-    AppService,
-    {
-      provide: APP_FILTER,
-      useClass: AllExceptionsFilter,
-    },
-  ],
-})
-export class AppModule {}
-</file>
-
 <file path="src/news/news.service.ts">
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -3843,6 +4118,7 @@ export class NewsService {
   }
 
   async findAll(
+    currentUserId: string,
     page: number,
     limit: number,
     categoryId?: string,
@@ -3859,14 +4135,12 @@ export class NewsService {
       status: status ? status : { not: NewsStatus.ARCHIVED },
     };
 
-    // Validate allowed sort fields including relation statistics
     const validSortFields = [
       'id', 'title', 'content', 'imageUrl', 'status', 
       'categoryId', 'createdAt', 'authorId', 'comments', 'likes', 'dislikes'
     ];
     const finalSortBy = sortBy && validSortFields.includes(sortBy) ? sortBy : 'createdAt';
 
-    // Validate sorting direction
     let finalSortOrder: 'asc' | 'desc' = 'desc';
     if (sortOrder) {
       const normalizedOrder = sortOrder.toLowerCase();
@@ -3877,12 +4151,9 @@ export class NewsService {
 
     let orderBy: Prisma.NewsOrderByWithRelationInput;
 
-    // Map strategic stats keys to proper Prisma relation count sorting syntax
     if (finalSortBy === 'comments') {
       orderBy = { comments: { _count: finalSortOrder } };
     } else if (finalSortBy === 'likes' || finalSortBy === 'dislikes') {
-      // Since UPVOTEs and DOWNVOTEs are stored in a single NewsVote table,
-      // Prisma's native relational _count sorts by total vote volume at the DB level.
       orderBy = { votes: { _count: finalSortOrder } };
     } else {
       orderBy = { [finalSortBy]: finalSortOrder };
@@ -3900,7 +4171,7 @@ export class NewsService {
           },
           category: true,
           departments: { select: { id: true, name: true } },
-          votes: { select: { voteType: true } },
+          votes: { select: { voteType: true, userId: true, newsId: true } },
           _count: { select: { comments: true } },
         },
       }),
@@ -3910,9 +4181,15 @@ export class NewsService {
     const mappedData = articles.map((article) => {
       const upvotes = article.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
       const downvotes = article.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
+      const currentUserVotes = article.votes.filter((v) => v.userId === currentUserId);
+      
       const { votes, ...rest } = article;
+      
       return { 
-        ...rest, 
+        ...rest,
+        votes: currentUserVotes,
+        upvotes,
+        downvotes,
         _count: {
           comments: article._count.comments,
           likes: upvotes,
@@ -4172,6 +4449,7 @@ model User {
   polls        Poll[]
   pollVotes    PollVote[]
   chatGroups   GroupMember[]
+  readMessages MessageReadReceipt[]
 }
 
 model Department {
@@ -4305,6 +4583,19 @@ model ChatMessage {
 
   groupId String
   group   ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  readReceipts MessageReadReceipt[]
+}
+
+model MessageReadReceipt {
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
 }
 
 model MessagesAuditLog {

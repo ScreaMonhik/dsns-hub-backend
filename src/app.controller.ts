@@ -16,21 +16,29 @@ export class AppController {
     return this.appService.getHello();
   }
 
-  @ApiOperation({ summary: 'Secure file serving with JWT validation' })
+  @ApiOperation({ summary: 'Secure file serving for chat with JWT validation' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
-  @Get('uploads/:folder/:filename')
-  serveProtectedFile(
-    @Param('folder') folder: string,
+  @Get('uploads/chat/:filename')
+  serveChatFile(
     @Param('filename') filename: string,
     @Res() res: Response,
   ) {
-    // Validate allowed directories to prevent arbitrary folder access
-    const allowedFolders = ['chat', 'news'];
-    if (!allowedFolders.includes(folder)) {
-      throw new BadRequestException('Access to this directory is forbidden');
-    }
+    return this.serveProtectedFile('chat', filename, res);
+  }
 
+  @ApiOperation({ summary: 'Secure file serving for news with JWT validation' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Get('uploads/news/:filename')
+  serveNewsFile(
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    return this.serveProtectedFile('news', filename, res);
+  }
+
+  private serveProtectedFile(folder: string, filename: string, res: Response) {
     // Path Traversal protection
     if (filename.includes('..') || filename.includes('/')) {
       throw new BadRequestException('Invalid filename');

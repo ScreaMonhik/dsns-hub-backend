@@ -18,9 +18,6 @@ import {
   FileTypeValidator 
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { v4 as uuidv4 } from 'uuid';
 import { Request } from 'express';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -65,15 +62,7 @@ export class UsersController {
 
   @ApiOperation({ summary: 'Оновити аватар поточного користувача' })
   @Patch('me/avatar')
-  @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: './uploads/avatars',
-      filename: (req, file, callback) => {
-        const uniqueSuffix = `${uuidv4()}${extname(file.originalname)}`;
-        callback(null, uniqueSuffix);
-      }
-    })
-  }))
+  @UseInterceptors(FileInterceptor('file'))
   async updateAvatar(
     @Req() req: RequestWithUser,
     @UploadedFile(

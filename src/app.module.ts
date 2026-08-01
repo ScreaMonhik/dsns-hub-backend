@@ -17,8 +17,8 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    PrismaModule, 
-    AuthModule, 
+    PrismaModule,
+    AuthModule,
     NewsModule, 
     DepartmentsModule, 
     DocumentsModule, 
