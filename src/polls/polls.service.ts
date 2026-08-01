@@ -47,6 +47,7 @@ export class PollsService {
   }
 
   async findAll(
+    currentUserId: string,
     departmentId?: string,
     status?: PollStatus,
     sortBy?: 'createdAt' | 'votes' | 'author',
@@ -61,8 +62,8 @@ export class PollsService {
 
     if (departmentId) {
       whereClause.OR = [
-        { departments: { some: { id: departmentId } } }, // Цільові опитування для підрозділу
-        { departments: { none: {} } },                   // Загальні опитування (для всіх)
+        { departments: { some: { id: departmentId } } },
+        { departments: { none: {} } },
       ];
     }
 
@@ -90,6 +91,10 @@ export class PollsService {
           orderBy: { orderIndex: 'asc' },
           include: {
             _count: { select: { votes: true } },
+            votes: {
+              where: { userId: currentUserId },
+              select: { optionId: true },
+            },
           },
         },
       },
@@ -97,10 +102,25 @@ export class PollsService {
 
     const pollsWithTotal = polls.map((poll) => {
       const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
-      return { ...poll, totalVotes };
+      
+      let userVotedOptionId: string | null = null;
+      for (const opt of poll.options) {
+        if (opt.votes && opt.votes.length > 0) {
+          userVotedOptionId = opt.id;
+          break;
+        }
+      }
+
+      const optionsCleaned = poll.options.map(({ votes, ...optRest }) => optRest);
+
+      return { 
+        ...poll, 
+        options: optionsCleaned, 
+        totalVotes, 
+        userVotedOptionId 
+      };
     });
 
-    // Сортування у пам'яті для обчислених або реляційних полів
     if (sortBy === 'votes') {
       pollsWithTotal.sort((a, b) => {
         return sortOrder === 'asc' ? a.totalVotes - b.totalVotes : b.totalVotes - a.totalVotes;
@@ -129,7 +149,7 @@ export class PollsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, currentUserId: string) {
     const poll = await this.prisma.poll.findUnique({
       where: { id },
       include: {
@@ -147,6 +167,10 @@ export class PollsService {
           orderBy: { orderIndex: 'asc' },
           include: {
             _count: { select: { votes: true } },
+            votes: {
+              where: { userId: currentUserId },
+              select: { optionId: true },
+            },
           },
         },
       },
@@ -157,11 +181,26 @@ export class PollsService {
     }
 
     const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
-    return { ...poll, totalVotes };
+    
+    let userVotedOptionId: string | null = null;
+    for (const opt of poll.options) {
+      if (opt.votes && opt.votes.length > 0) {
+        userVotedOptionId = opt.id;
+        break;
+      }
+    }
+
+    const optionsCleaned = poll.options.map(({ votes, ...optRest }) => optRest);
+
+    return { 
+      ...poll, 
+      options: optionsCleaned, 
+      totalVotes, 
+      userVotedOptionId 
+    };
   }
 
   async vote(pollId: string, userId: string, optionId: string) {
-    // 1. Перевіряємо чи існує опція, чи належить вона саме цьому опитуванню, та завантажуємо статус опитування
     const option = await this.prisma.pollOption.findFirst({
       where: { id: optionId, pollId },
       include: { poll: true },
@@ -171,17 +210,14 @@ export class PollsService {
       throw new BadRequestException('Некоректний варіант відповіді для цього опитування');
     }
 
-    // Захист: заборона голосування за чернетки
     if (option.poll.status === PollStatus.DRAFT) {
       throw new BadRequestException('Неможливо проголосувати в опитуванні, яке знаходиться в статусі чернетки (DRAFT).');
     }
 
-    // Захист: перевірка терміну дії (Expiration)
     if (option.poll.expiresAt && new Date() > option.poll.expiresAt) {
       throw new BadRequestException('Час голосування вичерпано.');
     }
 
-    // 2. Шукаємо, чи голосував вже цей користувач у ЦЬОМУ опитуванні (за будь-яку опцію)
     const existingVote = await this.prisma.pollVote.findFirst({
       where: {
         userId,
@@ -191,29 +227,26 @@ export class PollsService {
 
     if (existingVote) {
       if (existingVote.optionId === optionId) {
-        // Знімаємо голос, якщо користувач натиснув на той самий варіант
         await this.prisma.pollVote.delete({
           where: { userId_optionId: { userId, optionId: existingVote.optionId } },
         });
-        return { message: 'Голос знято' };
+        return this.findOne(pollId, userId);
       } else {
-        // Змінюємо голос
         await this.prisma.pollVote.delete({
           where: { userId_optionId: { userId, optionId: existingVote.optionId } },
         });
         await this.prisma.pollVote.create({
           data: { userId, optionId },
         });
-        return { message: 'Голос змінено' };
+        return this.findOne(pollId, userId);
       }
     }
 
-    // 3. Якщо голосу не було
     await this.prisma.pollVote.create({
       data: { userId, optionId },
     });
 
-    return { message: 'Голос зараховано' };
+    return this.findOne(pollId, userId);
   }
 
   async update(id: string, dto: UpdatePollDto) {

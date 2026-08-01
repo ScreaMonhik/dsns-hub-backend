@@ -45,6 +45,7 @@ export class PollsController {
   @ApiOperation({ summary: 'Отримати список опитувань (із фільтрацією, сортуванням та пагінацією)' })
   @Get()
   findAll(
+    @Req() req: RequestWithUser,
     @Query('departmentId') departmentId?: string,
     @Query('status') status?: PollStatus,
     @Query('sortBy') sortBy?: 'createdAt' | 'votes' | 'author',
@@ -52,13 +53,13 @@ export class PollsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.pollsService.findAll(departmentId, status, sortBy, sortOrder, page, limit);
+    return this.pollsService.findAll(req.user.sub, departmentId, status, sortBy, sortOrder, page, limit);
   }
 
   @ApiOperation({ summary: 'Отримати конкретне опитування' })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.pollsService.findOne(id);
+  findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
+    return this.pollsService.findOne(id, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Проголосувати в опитуванні' })
