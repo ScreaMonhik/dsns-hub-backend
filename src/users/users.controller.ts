@@ -1,4 +1,27 @@
-import { Controller, Get, Patch, Delete, Post, Body, Param, Query, UseGuards, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
+import { 
+  Controller, 
+  Get, 
+  Patch, 
+  Delete, 
+  Post, 
+  Body, 
+  Param, 
+  Query, 
+  UseGuards, 
+  ParseIntPipe, 
+  DefaultValuePipe, 
+  Req, 
+  UseInterceptors, 
+  UploadedFile, 
+  ParseFilePipe, 
+  MaxFileSizeValidator, 
+  FileTypeValidator 
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { Request } from 'express';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -7,6 +30,14 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+
+interface RequestWithUser extends Request {
+  user: {
+    sub: string;
+    email: string;
+    role: Role;
+  };
+}
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -24,6 +55,37 @@ export class UsersController {
     @Query('search') search?: string,
   ) {
     return this.usersService.findAll(page, limit, search);
+  }
+
+  @ApiOperation({ summary: 'Отримати профіль поточного користувача' })
+  @Get('me')
+  async getMe(@Req() req: RequestWithUser) {
+    return this.usersService.getMe(req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Оновити аватар поточного користувача' })
+  @Patch('me/avatar')
+  @UseInterceptors(FileInterceptor('file', {
+    storage: diskStorage({
+      destination: './uploads/avatars',
+      filename: (req, file, callback) => {
+        const uniqueSuffix = `${uuidv4()}${extname(file.originalname)}`;
+        callback(null, uniqueSuffix);
+      }
+    })
+  }))
+  async updateAvatar(
+    @Req() req: RequestWithUser,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
+          new FileTypeValidator({ fileType: '.(png|jpeg|jpg|webp)' }),
+        ],
+      }),
+    ) file: Express.Multer.File,
+  ) {
+    return this.usersService.updateAvatar(req.user.sub, file);
   }
 
   @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (Тільки ADMIN)' })
