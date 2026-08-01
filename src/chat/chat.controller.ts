@@ -43,10 +43,15 @@ export class ChatController {
     return this.chatService.getUserGroups(req.user.sub);
   }
 
-  @ApiOperation({ summary: 'Отримати історію повідомлень кімнати' })
+  @ApiOperation({ summary: 'Отримати історію повідомлень кімнати з пагінацією' })
   @Get('groups/:groupId/messages')
-  getGroupMessages(@Param('groupId') groupId: string, @Req() req: RequestWithUser) {
-    return this.chatService.getGroupMessages(groupId, req.user);
+  getGroupMessages(
+    @Param('groupId') groupId: string, 
+    @Req() req: RequestWithUser,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.chatService.getGroupMessages(groupId, req.user, page, limit);
   }
 
 @ApiOperation({ summary: 'Get list of group members' })

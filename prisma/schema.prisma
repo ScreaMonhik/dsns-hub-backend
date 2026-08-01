@@ -64,6 +64,7 @@ model User {
   polls        Poll[]
   pollVotes    PollVote[]
   chatGroups   GroupMember[]
+  readMessages MessageReadReceipt[]
 }
 
 model Department {
@@ -197,6 +198,19 @@ model ChatMessage {
 
   groupId String
   group   ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  readReceipts MessageReadReceipt[]
+}
+
+model MessageReadReceipt {
+  messageId String
+  userId    String
+  readAt    DateTime @default(now())
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
 }
 
 model MessagesAuditLog {

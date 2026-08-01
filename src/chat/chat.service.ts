@@ -52,31 +52,85 @@ export class ChatService {
   }
 
   async getUserGroups(userId: string) {
-    return this.prisma.chatGroup.findMany({
+    const groups = await this.prisma.chatGroup.findMany({
       where: { members: { some: { userId } } },
       include: {
         department: { select: { id: true, name: true } },
         members: { where: { userId }, select: { isPinned: true, pinOrder: true, isAdmin: true } },
-        _count: { select: { members: true } },
-        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+        _count: { 
+          select: { 
+            members: true,
+            messages: {
+              where: {
+                senderId: { not: userId },
+                NOT: { readReceipts: { some: { userId } } }
+              }
+            }
+          } 
+        },
+        messages: { 
+          orderBy: { createdAt: 'desc' }, 
+          take: 1,
+          include: { sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } }
+        },
       },
+    });
+
+    return groups.map((g) => {
+      const { _count, ...rest } = g;
+      return {
+        ...rest,
+        unreadCount: _count.messages,
+        _count: { members: _count.members }
+      };
+    }).sort((a, b) => {
+      const dateA = a.messages[0]?.createdAt.getTime() || a.createdAt.getTime();
+      const dateB = b.messages[0]?.createdAt.getTime() || b.createdAt.getTime();
+      return dateB - dateA;
     });
   }
 
-  async getGroupMessages(groupId: string, user: { sub: string; role: Role }) {
+  async getGroupMessages(groupId: string, user: { sub: string; role: Role }, page: number = 1, limit: number = 20) {
     await this.verifyMembership(groupId, user);
-    const messages = await this.prisma.chatMessage.findMany({
-      where: { groupId },
-      orderBy: { createdAt: 'asc' },
-      include: { sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },
-    });
+    const skip = (page - 1) * limit;
+
+    const [messages, total] = await Promise.all([
+      this.prisma.chatMessage.findMany({
+        where: { groupId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: { 
+          sender: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          readReceipts: { select: { userId: true, readAt: true } }
+        },
+      }),
+      this.prisma.chatMessage.count({ where: { groupId } })
+    ]);
 
     return {
-      data: messages,
+      data: messages.reverse(),
       meta: {
-        total: messages.length,
+        total,
+        page,
+        lastPage: Math.ceil(total / limit),
+        limit
       },
     };
+  }
+
+  async markMessagesAsRead(groupId: string, userId: string, messageIds: string[]) {
+    await this.verifyMembership(groupId, { sub: userId, role: Role.USER });
+
+    const data = messageIds.map(messageId => ({
+      messageId,
+      userId,
+    }));
+
+    await this.prisma.messageReadReceipt.createMany({
+      data,
+      skipDuplicates: true,
+    });
   }
 
   async getGroupMembers(groupId: string, user: { sub: string; role: Role }) {

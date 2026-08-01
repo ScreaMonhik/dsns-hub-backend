@@ -11,7 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
-import { SendMessageDto, EditMessageDto, DeleteMessageDto } from './dto/chat-message.dto';
+import { SendMessageDto, EditMessageDto, DeleteMessageDto, MarkAsReadDto } from './dto/chat-message.dto';
 
 @WebSocketGateway({
   cors: { origin: '*' }, 
@@ -74,6 +74,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const deletedMessage = await this.chatService.deleteMessage(dto.messageId, user);
       this.server.to(deletedMessage.groupId).emit('messageDeleted', deletedMessage);
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('markAsRead')
+  async handleMarkAsRead(@ConnectedSocket() client: Socket, @MessageBody() dto: MarkAsReadDto) {
+    const user = client.data.user;
+    try {
+      await this.chatService.markMessagesAsRead(dto.groupId, user.sub, dto.messageIds);
+      
+      this.server.to(dto.groupId).emit('messagesRead', {
+        groupId: dto.groupId,
+        messageIds: dto.messageIds,
+        readByUserId: user.sub,
+      });
+      
       return { status: 'ok' };
     } catch (error: any) {
       return { status: 'error', message: error.message };

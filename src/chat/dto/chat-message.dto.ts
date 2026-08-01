@@ -25,3 +25,13 @@ export class DeleteMessageDto {
   @IsNotEmpty()
   messageId!: string;
 }
+
+export class MarkAsReadDto {
+  @IsUUID('4')
+  @IsNotEmpty()
+  groupId!: string;
+
+  @IsString({ each: true })
+  @IsNotEmpty()
+  messageIds!: string[];
+}
