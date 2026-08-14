@@ -53,7 +53,6 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    // 1. Шукаємо користувача
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -66,18 +65,17 @@ export class AuthService {
       throw new ForbiddenException('Ваш обліковий запис заблоковано');
     }
 
-    // 2. Перевіряємо хеш пароля
     const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
     
     if (!isPasswordValid) {
       throw new UnauthorizedException('Невірний email або пароль');
     }
 
-    // 3. Генеруємо JWT токен
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    const tokens = await this.getTokens(user.id, user.email, user.role);
+    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
     
     return {
-      accessToken: await this.jwtService.signAsync(payload),
+      ...tokens,
       user: {
         id: user.id,
         email: user.email,
@@ -87,5 +85,59 @@ export class AuthService {
         avatarUrl: user.avatarUrl,
       },
     };
+  }
+
+  async logout(userId: string) {
+    await this.prisma.user.updateMany({
+      where: { id: userId, refreshToken: { not: null } },
+      data: { refreshToken: null },
+    });
+    return { message: 'Успішний вихід із системи' };
+  }
+
+  async refreshTokens(userId: string, refreshToken: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user || !user.refreshToken || !user.isActive) {
+      throw new ForbiddenException('Доступ заборонено');
+    }
+
+    const refreshTokenMatches = await bcrypt.compare(refreshToken, user.refreshToken);
+    if (!refreshTokenMatches) {
+      throw new ForbiddenException('Доступ заборонено');
+    }
+
+    const tokens = await this.getTokens(user.id, user.email, user.role);
+    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+
+    return tokens;
+  }
+
+  private async getTokens(userId: string, email: string, role: string) {
+    const jwtPayload = { sub: userId, email, role };
+
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwtService.signAsync(jwtPayload, {
+        secret: 'super-secret-key', // TODO: Move to .env
+        expiresIn: '15m',
+      }),
+      this.jwtService.signAsync(jwtPayload, {
+        secret: 'super-secret-refresh-key', // TODO: Move to .env
+        expiresIn: '7d',
+      }),
+    ]);
+
+    return { accessToken, refreshToken };
+  }
+
+  private async updateRefreshTokenHash(userId: string, refreshToken: string) {
+    const saltRounds = 10;
+    const hash = await bcrypt.hash(refreshToken, saltRounds);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { refreshToken: hash },
+    });
   }
 }

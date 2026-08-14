@@ -62,6 +62,7 @@ model User {
   role         Role     @default(USER)
   avatarUrl    String?
   isActive     Boolean  @default(true)
+  refreshToken String?  @db.Text
   createdAt    DateTime @default(now())
 
   // Зв'язки
