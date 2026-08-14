@@ -33,12 +33,17 @@ interface RequestWithUser extends Request {
   user: { sub: string; email: string; role: Role };
 }
 
+import { FileSecurityService } from '../security/file-security.service';
+
 @ApiTags('News')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('news')
 export class NewsController {
-  constructor(private readonly newsService: NewsService) {}
+  constructor(
+    private readonly newsService: NewsService,
+    private readonly fileSecurityService: FileSecurityService,
+  ) {}
 
   @ApiOperation({ summary: 'Створити статтю новин (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
@@ -77,8 +82,12 @@ export class NewsController {
       limits: { fileSize: 100 * 1024 * 1024 },
     }),
   )
-  uploadMedia(@UploadedFile() file: Express.Multer.File) {
+  async uploadMedia(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('Файл не завантажено');
+    
+    const filePath = join(newsUploadDir, file.filename);
+    await this.fileSecurityService.validateMediaSignature(filePath);
+    
     return { url: `/news/media/${file.filename}` };
   }
 
