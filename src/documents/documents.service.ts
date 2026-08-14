@@ -35,7 +35,7 @@ export class DocumentsService {
       },
       include: {
         departments: { select: { id: true, name: true } },
-        author: { select: { id: true, firstName: true, lastName: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
       },
     });
   }
@@ -75,7 +75,7 @@ export class DocumentsService {
         orderBy: { createdAt: 'desc' },
         include: {
           departments: { select: { id: true, name: true } },
-          author: { select: { id: true, firstName: true, lastName: true } },
+          author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
         },
       }),
       this.prisma.document.count({ where }),
@@ -97,7 +97,7 @@ export class DocumentsService {
       where: { id },
       include: {
         departments: { select: { id: true, name: true } },
-        author: { select: { id: true, firstName: true, lastName: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
       },
     });
 
@@ -142,7 +142,7 @@ export class DocumentsService {
       },
       include: {
         departments: { select: { id: true, name: true } },
-        author: { select: { id: true, firstName: true, lastName: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
       },
     });
   }
@@ -230,7 +230,7 @@ export class DocumentsService {
       data: { fileUrl },
       include: {
         departments: { select: { id: true, name: true } },
-        author: { select: { id: true, firstName: true, lastName: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
       },
     });
   }
