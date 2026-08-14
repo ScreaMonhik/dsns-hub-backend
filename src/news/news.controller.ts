@@ -200,15 +200,15 @@ export class NewsController {
   @ApiOperation({ summary: 'Редагувати новину (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateNewsDto) {
-    return this.newsService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateNewsDto, @Req() req: RequestWithUser) {
+    return this.newsService.update(id, dto, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Видалити новину (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.newsService.remove(id);
+  remove(@Param('id') id: string, @Req() req: RequestWithUser) {
+    return this.newsService.remove(id, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Додати коментар до новини' })
@@ -233,8 +233,9 @@ export class NewsController {
   removeComment(
     @Param('newsId') newsId: string,
     @Param('commentId') commentId: string,
+    @Req() req: RequestWithUser,
   ) {
-    return this.newsService.removeComment(newsId, commentId);
+    return this.newsService.removeComment(newsId, commentId, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Проголосувати за новину (Лайк / Дизлайк)' })

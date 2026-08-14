@@ -141,8 +141,8 @@ export class ProjectsController {
   @ApiOperation({ summary: 'Редагувати проєкт (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateProjectDto) {
-    return this.projectsService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateProjectDto, @Req() req: RequestWithUser) {
+    return this.projectsService.update(id, dto, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Опублікувати проєкт (Тільки ADMIN)' })
@@ -169,8 +169,19 @@ export class ProjectsController {
   @ApiOperation({ summary: 'Видалити проєкт (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.projectsService.remove(id);
+  remove(@Param('id') id: string, @Req() req: RequestWithUser) {
+    return this.projectsService.remove(id, req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Видалити коментар проєкту (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':projectId/comments/:commentId')
+  removeComment(
+    @Param('projectId') projectId: string,
+    @Param('commentId') commentId: string,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.projectsService.removeComment(projectId, commentId, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Додати коментар до проєкту' })

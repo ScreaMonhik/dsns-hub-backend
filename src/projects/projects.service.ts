@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { FileSecurityService } from '../security/file-security.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectDto } from './dto/query-project.dto';
@@ -9,9 +10,18 @@ import { join } from 'path';
 
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fileSecurityService: FileSecurityService,
+  ) {}
 
   async create(authorId: string, dto: CreateProjectDto, fileUrl: string) {
+    const filename = fileUrl.split('/').pop() || '';
+    const filePath = join(process.cwd(), 'uploads', 'projects', filename);
+    
+    // Strict binary signature validation before saving to DB
+    await this.fileSecurityService.validatePdfSignature(filePath);
+
     if (dto.departmentIds && dto.departmentIds.length > 0) {
       const departments = await this.prisma.department.findMany({
         where: { id: { in: dto.departmentIds } },
@@ -138,7 +148,7 @@ export class ProjectsService {
     return { ...project, upvotes, downvotes, currentUserVote };
   }
 
-  async update(id: string, dto: UpdateProjectDto) {
+  async update(id: string, dto: UpdateProjectDto, userId: string) {
     const project = await this.prisma.project.findUnique({ where: { id } });
     if (!project) throw new NotFoundException('Project not found');
 
@@ -154,20 +164,33 @@ export class ProjectsService {
       }
     }
 
-    return this.prisma.project.update({
-      where: { id },
-      data: {
-        ...restData,
-        ...(departmentIds !== undefined && {
-          departments: {
-            set: departmentIds.map((deptId) => ({ id: deptId })),
-          },
-        }),
-      },
-      include: {
-        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-        departments: { select: { id: true, name: true } },
-      },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'Project',
+          entityId: id,
+          action: 'UPDATE',
+          oldValues: project as unknown as Prisma.InputJsonValue,
+          newValues: dto as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+
+      return tx.project.update({
+        where: { id },
+        data: {
+          ...restData,
+          ...(departmentIds !== undefined && {
+            departments: {
+              set: departmentIds.map((deptId) => ({ id: deptId })),
+            },
+          }),
+        },
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          departments: { select: { id: true, name: true } },
+        },
+      });
     });
   }
 
@@ -205,28 +228,75 @@ export class ProjectsService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, userId: string) {
     const project = await this.prisma.project.findUnique({ where: { id } });
     if (!project) throw new NotFoundException('Project not found');
 
-    // Видаляємо PDF файл з диска при видаленні проєкту
     const filename = project.fileUrl.split('/').pop();
     if (filename) {
       const filePath = join(process.cwd(), 'uploads', 'projects', filename);
       try {
         await fs.unlink(filePath);
       } catch (error) {
-        // Ігноруємо помилку, якщо файл вже відсутній на диску
+        // Ігноруємо помилку
       }
     }
 
-    await this.prisma.project.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'Project',
+          entityId: id,
+          action: 'DELETE',
+          oldValues: project as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.project.delete({ where: { id } });
+    });
+
     return { message: 'Project successfully deleted' };
   }
 
+  async removeComment(projectId: string, commentId: string, userId: string) {
+    const comment = await this.prisma.projectComment.findFirst({
+      where: { id: commentId, projectId },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment not found or does not belong to this project');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'ProjectComment',
+          entityId: commentId,
+          action: 'DELETE',
+          oldValues: comment as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.projectComment.delete({
+        where: { id: commentId },
+      });
+    });
+
+    return { message: 'Comment successfully deleted' };
+  }
+
   async updateFile(id: string, fileUrl: string) {
+    const newFilename = fileUrl.split('/').pop() || '';
+    const newFilePath = join(process.cwd(), 'uploads', 'projects', newFilename);
+    
+    // Strict binary signature validation for the newly updated file
+    await this.fileSecurityService.validatePdfSignature(newFilePath);
+
     const project = await this.prisma.project.findUnique({ where: { id } });
-    if (!project) throw new NotFoundException('Project not found');
+    if (!project) {
+      await fs.unlink(newFilePath).catch(() => {});
+      throw new NotFoundException('Project not found');
+    }
 
     // Видаляємо старий файл з диска перед збереженням нового
     const oldFilename = project.fileUrl.split('/').pop();

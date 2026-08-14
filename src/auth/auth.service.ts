@@ -62,13 +62,35 @@ export class AuthService {
     }
 
     if (!user.isActive) {
-      throw new ForbiddenException('Ваш обліковий запис заблоковано');
+      throw new ForbiddenException('Ваш обліковий запис заблоковано. Зверніться до адміністратора.');
     }
 
     const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
     
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Невірний email або пароль');
+      const newAttemptsCount = user.failedLoginAttempts + 1;
+      
+      if (newAttemptsCount >= 5) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { isActive: false, failedLoginAttempts: newAttemptsCount },
+        });
+        throw new ForbiddenException('Занадто багато невдалих спроб. Ваш обліковий запис заблоковано.');
+      } else {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { failedLoginAttempts: newAttemptsCount },
+        });
+        throw new UnauthorizedException('Невірний email або пароль');
+      }
+    }
+
+    // Reset failed attempts on successful login
+    if (user.failedLoginAttempts > 0) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: 0 },
+      });
     }
 
     const tokens = await this.getTokens(user.id, user.email, user.role);

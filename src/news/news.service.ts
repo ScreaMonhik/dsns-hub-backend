@@ -146,29 +146,53 @@ export class NewsService {
     return { ...news, upvotes, downvotes, _count: { comments: commentsCount } };
   }
 
-  async update(id: string, dto: UpdateNewsDto) {
-    await this.findOne(id); // Validation check
+  async update(id: string, dto: UpdateNewsDto, userId: string) {
+    const oldNews = await this.findOne(id); // Validation check and old data retrieval
 
-    // Extract departmentIds to prevent passing it directly to Prisma
     const { departmentIds, ...restData } = dto;
 
-    return this.prisma.news.update({
-      where: { id },
-      data: {
-        ...restData,
-        // If departmentIds is provided (even an empty array []), replace the relations
-        ...(departmentIds !== undefined && {
-          departments: {
-            set: departmentIds.map((deptId) => ({ id: deptId })),
-          },
-        }),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'News',
+          entityId: id,
+          action: 'UPDATE',
+          oldValues: oldNews as unknown as Prisma.InputJsonValue,
+          newValues: dto as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+
+      return tx.news.update({
+        where: { id },
+        data: {
+          ...restData,
+          ...(departmentIds !== undefined && {
+            departments: {
+              set: departmentIds.map((deptId) => ({ id: deptId })),
+            },
+          }),
+        },
+      });
     });
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
-    await this.prisma.news.delete({ where: { id } });
+  async remove(id: string, userId: string) {
+    const oldNews = await this.findOne(id);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'News',
+          entityId: id,
+          action: 'DELETE',
+          oldValues: oldNews as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.news.delete({ where: { id } });
+    });
+
     return { message: 'Новину успішно видалено' };
   }
 
@@ -245,7 +269,7 @@ export class NewsService {
     });
   }
 
-  async removeComment(newsId: string, commentId: string) {
+  async removeComment(newsId: string, commentId: string, userId: string) {
     const comment = await this.prisma.newsComment.findFirst({
       where: { id: commentId, newsId },
     });
@@ -254,8 +278,19 @@ export class NewsService {
       throw new NotFoundException('Comment not found or does not belong to this news');
     }
 
-    await this.prisma.newsComment.delete({
-      where: { id: commentId },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'NewsComment',
+          entityId: commentId,
+          action: 'DELETE',
+          oldValues: comment as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.newsComment.delete({
+        where: { id: commentId },
+      });
     });
 
     return { message: 'Comment successfully deleted' };

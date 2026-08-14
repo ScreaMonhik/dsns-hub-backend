@@ -54,31 +54,59 @@ model NewsCategory {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  firstName    String
-  lastName     String
-  role         Role     @default(USER)
-  avatarUrl    String?
-  isActive     Boolean  @default(true)
-  refreshToken String?  @db.Text
-  createdAt    DateTime @default(now())
+  id                  String   @id @default(uuid())
+  email               String   @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  role                Role     @default(USER)
+  avatarUrl           String?
+  isActive            Boolean  @default(true)
+  failedLoginAttempts Int      @default(0)
+  refreshToken        String?  @db.Text
+  createdAt           DateTime @default(now())
 
   // Зв'язки
-  news         News[]
-  newsComments NewsComment[]
-  newsVotes    NewsVote[]
-  projects     Project[]
-  projectComms ProjectComment[]
-  projectVotes ProjectVote[]
-  messages     ChatMessage[]
-  auditLogs    MessagesAuditLog[]
-  polls        Poll[]
-  pollVotes    PollVote[]
-  chatGroups   GroupMember[]
-  readMessages MessageReadReceipt[]
-  documents    Document[]
+  news            News[]
+  newsComments    NewsComment[]
+  newsVotes       NewsVote[]
+  projects        Project[]
+  projectComms    ProjectComment[]
+  projectVotes    ProjectVote[]
+  messages        ChatMessage[]
+  auditLogs       MessagesAuditLog[]
+  polls           Poll[]
+  pollVotes       PollVote[]
+  chatGroups      GroupMember[]
+  readMessages    MessageReadReceipt[]
+  documents       Document[]
+  systemAuditLogs SystemAuditLog[]
+  apiAuditLogs    ApiAuditLog[]
+}
+
+model SystemAuditLog {
+  id          String   @id @default(uuid())
+  entityName  String
+  entityId    String
+  action      String   // CREATE, UPDATE, DELETE
+  oldValues   Json?
+  newValues   Json?
+  createdAt   DateTime @default(now())
+
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model ApiAuditLog {
+  id          String   @id @default(uuid())
+  method      String
+  url         String
+  payload     Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 model Department {

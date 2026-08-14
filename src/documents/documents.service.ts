@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { FileSecurityService } from '../security/file-security.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 import { QueryDocumentDto } from './dto/query-document.dto';
@@ -9,9 +10,18 @@ import { join } from 'path';
 
 @Injectable()
 export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fileSecurityService: FileSecurityService,
+  ) {}
 
   async create(authorId: string, dto: CreateDocumentDto, fileUrl: string) {
+    const filename = fileUrl.split('/').pop() || '';
+    const filePath = join(process.cwd(), 'uploads', 'documents', filename);
+    
+    // Strict binary signature validation before saving to DB
+    await this.fileSecurityService.validatePdfSignature(filePath);
+
     if (dto.departmentIds && dto.departmentIds.length > 0) {
       const departments = await this.prisma.department.findMany({
         where: { id: { in: dto.departmentIds } },
@@ -209,8 +219,16 @@ export class DocumentsService {
   }
 
   async updateFile(id: string, fileUrl: string) {
+    const newFilename = fileUrl.split('/').pop() || '';
+    const newFilePath = join(process.cwd(), 'uploads', 'documents', newFilename);
+    
+    // Strict binary signature validation for the newly updated file
+    await this.fileSecurityService.validatePdfSignature(newFilePath);
+
     const document = await this.prisma.document.findUnique({ where: { id } });
     if (!document) {
+      // If DB document doesn't exist, clean up the newly uploaded file
+      await fs.unlink(newFilePath).catch(() => {});
       throw new NotFoundException('Document not found');
     }
 
