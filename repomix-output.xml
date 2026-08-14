@@ -165,6 +165,8 @@ uploads/
     d3a8c4bd-c6dc-41be-9ed2-79cb2e2df0af.jpg
     f332a4eb-c02b-44d8-84f2-0f539b2cc16f.jpg
   chat/
+    56be311a-8188-4774-b463-fe3fc27ee8e9.jpg
+    b2ccb501-a3f6-4995-9fbd-843cc1442ae2.jpg
     ecedc763-affd-4c47-bfa0-4154b5bee318.webp
   news/
     3b894537-116e-4390-a343-aa1c5f08fee9.jpg
@@ -187,41 +189,6 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
-
-<file path="src/users/avatars.controller.ts">
-import { Controller, Get, Param, Res, NotFoundException } from '@nestjs/common';
-import type { Response } from 'express';
-import { createReadStream } from 'fs';
-import { access } from 'fs/promises';
-import { join } from 'path';
-
-@Controller('uploads/avatars')
-export class AvatarsController {
-  @Get(':filename')
-  async serveAvatar(@Param('filename') filename: string, @Res() res: Response) {
-    // Basic Path Traversal protection
-    if (filename.includes('..') || filename.includes('/')) {
-      throw new NotFoundException('Invalid file path');
-    }
-
-    const filePath = join(process.cwd(), 'uploads', 'avatars', filename);
-
-    try {
-      await access(filePath);
-    } catch (error) {
-      throw new NotFoundException('Avatar not found');
-    }
-
-    // Determine basic content type
-    if (filename.endsWith('.png')) res.setHeader('Content-Type', 'image/png');
-    else if (filename.endsWith('.webp')) res.setHeader('Content-Type', 'image/webp');
-    else res.setHeader('Content-Type', 'image/jpeg');
-
-    const fileStream = createReadStream(filePath);
-    fileStream.pipe(res);
-  }
-}
-</file>
 
 <file path="src/auth/decorators/roles.decorator.ts">
 import { SetMetadata } from '@nestjs/common';
@@ -1310,6 +1277,48 @@ export class UpdateUserDto {
 }
 </file>
 
+<file path="src/users/avatars.controller.ts">
+import { Controller, Get, Param, NotFoundException, StreamableFile, Res } from '@nestjs/common';
+import { createReadStream } from 'fs';
+import { stat } from 'fs/promises';
+import { join } from 'path';
+
+@Controller('uploads/avatars')
+export class AvatarsController {
+  @Get(':filename')
+  async serveAvatar(
+    @Param('filename') filename: string,
+    @Res({ passthrough: true }) res: any
+  ): Promise<StreamableFile> {
+    if (filename.includes('..') || filename.includes('/')) {
+      throw new NotFoundException('Invalid file path');
+    }
+
+    const filePath = join(process.cwd(), 'uploads', 'avatars', filename);
+
+    try {
+      const fileStat = await stat(filePath);
+      if (!fileStat.isFile()) {
+        throw new NotFoundException('Not a file');
+      }
+    } catch (error) {
+      throw new NotFoundException('Avatar not found on disk');
+    }
+
+    if (filename.endsWith('.png')) {
+      res.setHeader('Content-Type', 'image/png');
+    } else if (filename.endsWith('.webp')) {
+      res.setHeader('Content-Type', 'image/webp');
+    } else {
+      res.setHeader('Content-Type', 'image/jpeg');
+    }
+
+    const fileStream = createReadStream(filePath);
+    return new StreamableFile(fileStream);
+  }
+}
+</file>
+
 <file path="src/users/users.controller.spec.ts">
 import { Test, TestingModule } from '@nestjs/testing';
 import { UsersController } from './users.controller';
@@ -1329,19 +1338,6 @@ describe('UsersController', () => {
     expect(controller).toBeDefined();
   });
 });
-</file>
-
-<file path="src/users/users.module.ts">
-import { Module } from '@nestjs/common';
-import { UsersService } from './users.service';
-import { UsersController } from './users.controller';
-import { AvatarsController } from './avatars.controller';
-
-@Module({
-  providers: [UsersService],
-  controllers: [UsersController, AvatarsController]
-})
-export class UsersModule {}
 </file>
 
 <file path="src/users/users.service.spec.ts">
@@ -1585,7 +1581,7 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
-
+</file>
 
 <file path="tsconfig.build.json">
 {
@@ -1949,54 +1945,17 @@ import { PollsCronService } from './polls.cron';
 export class PollsModule {}
 </file>
 
-<file path="src/app.controller.ts">
-import { Controller, Get, Param, Res, UseGuards, NotFoundException, BadRequestException } from '@nestjs/common';
-import type { Response } from 'express';
-import { join } from 'path';
-import { existsSync } from 'fs';
-import { AppService } from './app.service';
-import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+<file path="src/users/users.module.ts">
+import { Module } from '@nestjs/common';
+import { UsersService } from './users.service';
+import { UsersController } from './users.controller';
+import { AvatarsController } from './avatars.controller';
 
-@ApiTags('System')
-@Controller()
-export class AppController {
-  constructor(private readonly appService: AppService) {}
-
-  @Get()
-  getHello(): string {
-    return this.appService.getHello();
-  }
-
-  @ApiOperation({ summary: 'Secure file serving with JWT validation' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @Get('uploads/:folder/:filename')
-  serveProtectedFile(
-    @Param('folder') folder: string,
-    @Param('filename') filename: string,
-    @Res() res: Response,
-  ) {
-    // Validate allowed directories to prevent arbitrary folder access
-    const allowedFolders = ['chat', 'news'];
-    if (!allowedFolders.includes(folder)) {
-      throw new BadRequestException('Access to this directory is forbidden');
-    }
-
-    // Path Traversal protection
-    if (filename.includes('..') || filename.includes('/')) {
-      throw new BadRequestException('Invalid filename');
-    }
-
-    const filePath = join(process.cwd(), 'uploads', folder, filename);
-
-    if (!existsSync(filePath)) {
-      throw new NotFoundException('File not found');
-    }
-
-    return res.sendFile(filePath);
-  }
-}
+@Module({
+  providers: [UsersService],
+  controllers: [UsersController, AvatarsController]
+})
+export class UsersModule {}
 </file>
 
 <file path=".gitignore">
@@ -2334,239 +2293,60 @@ export class UpdatePollDto extends PartialType(CreatePollDto) {
 }
 </file>
 
-<file path="src/users/users.controller.ts">
-import { 
-  Controller, 
-  Get, 
-  Patch, 
-  Delete, 
-  Post, 
-  Body, 
-  Param, 
-  Query, 
-  UseGuards, 
-  ParseIntPipe, 
-  DefaultValuePipe, 
-  Req, 
-  UseInterceptors, 
-  UploadedFile, 
-  ParseFilePipe, 
-  MaxFileSizeValidator, 
-  FileTypeValidator 
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { Request } from 'express';
-import { UsersService } from './users.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
+<file path="src/app.controller.ts">
+import { Controller, Get, Param, Res, UseGuards, NotFoundException, BadRequestException } from '@nestjs/common';
+import type { Response } from 'express';
+import { join } from 'path';
+import { existsSync } from 'fs';
+import { AppService } from './app.service';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { Role } from '@prisma/client';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
 
-interface RequestWithUser extends Request {
-  user: {
-    sub: string;
-    email: string;
-    role: Role;
-  };
-}
+@ApiTags('System')
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
 
-@ApiTags('Users')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('users')
-export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
-
-  @ApiOperation({ summary: 'Отримати список користувачів з пагінацією та пошуком (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
   @Get()
-  findAll(
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
-    @Query('search') search?: string,
+  getHello(): string {
+    return this.appService.getHello();
+  }
+
+  @ApiOperation({ summary: 'Secure file serving for chat with JWT validation' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Get('uploads/chat/:filename')
+  serveChatFile(
+    @Param('filename') filename: string,
+    @Res() res: Response,
   ) {
-    return this.usersService.findAll(page, limit, search);
+    return this.serveProtectedFile('chat', filename, res);
   }
 
-  @ApiOperation({ summary: 'Отримати профіль поточного користувача' })
-  @Get('me')
-  async getMe(@Req() req: RequestWithUser) {
-    return this.usersService.getMe(req.user.sub);
-  }
-
-  @ApiOperation({ summary: 'Оновити аватар поточного користувача' })
-  @Patch('me/avatar')
-  @UseInterceptors(FileInterceptor('file'))
-  async updateAvatar(
-    @Req() req: RequestWithUser,
-    @UploadedFile(
-      new ParseFilePipe({
-        validators: [
-          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
-          new FileTypeValidator({ fileType: '.(png|jpeg|jpg|webp)' }),
-        ],
-      }),
-    ) file: Express.Multer.File,
+  @ApiOperation({ summary: 'Secure file serving for news with JWT validation' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Get('uploads/news/:filename')
+  serveNewsFile(
+    @Param('filename') filename: string,
+    @Res() res: Response,
   ) {
-    return this.usersService.updateAvatar(req.user.sub, file);
+    return this.serveProtectedFile('news', filename, res);
   }
 
-  @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
-  }
-
-  @ApiOperation({ summary: 'Повністю видалити користувача з бази даних (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(id);
-  }
-
-  @ApiOperation({ summary: 'Скинути пароль користувача вручну (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Post(':id/reset-password')
-  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
-    return this.usersService.resetPassword(id, dto.newPassword);
-  }
-}
-</file>
-
-<file path="src/users/users.service.ts">
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
-import * as fs from 'fs/promises';
-import { join, extname } from 'path';
-import { v4 as uuidv4 } from 'uuid';
-import { UpdateUserDto } from './dto/update-user.dto';
-import * as bcrypt from 'bcrypt';
-
-@Injectable()
-export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async findAll(page: number, limit: number, search?: string) {
-    const skip = (page - 1) * limit;
-    
-    const where: Prisma.UserWhereInput = {};
-    if (search) {
-      where.OR = [
-        { firstName: { contains: search, mode: 'insensitive' } },
-        { lastName: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-      ];
+  private serveProtectedFile(folder: string, filename: string, res: Response) {
+    // Path Traversal protection
+    if (filename.includes('..') || filename.includes('/')) {
+      throw new BadRequestException('Invalid filename');
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where,
-        skip,
-        take: limit,
-        select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          role: true,
-          avatarUrl: true,
-          isActive: true,
-          createdAt: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.user.count({ where }),
-    ]);
+    const filePath = join(process.cwd(), 'uploads', folder, filename);
 
-    return {
-      data,
-      meta: {
-        total,
-        page,
-        lastPage: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  async update(id: string, dto: UpdateUserDto) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Користувача не знайдено');
-
-    return this.prisma.user.update({
-      where: { id },
-      data: dto,
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        isActive: true,
-      },
-    });
-  }
-
-  async remove(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Користувача не знайдено');
-
-    await this.prisma.user.delete({ where: { id } });
-    return { message: 'Користувача успішно видалено з системи' };
-  }
-
-  async resetPassword(id: string, newPassword: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('Користувача не знайдено');
-
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
-
-    await this.prisma.user.update({
-      where: { id },
-      data: { passwordHash: hashedPassword },
-    });
-
-    return { message: 'Пароль успішно скинуто' };
-  }
-
-  async getMe(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
-
-    if (!user) {
-      throw new NotFoundException('User not found');
+    if (!existsSync(filePath)) {
+      throw new NotFoundException('File not found');
     }
 
-    const { passwordHash, ...safeUser } = user;
-    return safeUser;
-  }
-
-  async updateAvatar(userId: string, file: Express.Multer.File) {
-    if (!file) {
-      throw new BadRequestException('File is required');
-    }
-
-    const filename = `${uuidv4()}${extname(file.originalname)}`;
-    const uploadDir = join(process.cwd(), 'uploads', 'avatars');
-    const uploadPath = join(uploadDir, filename);
-
-    await fs.mkdir(uploadDir, { recursive: true });
-    await fs.writeFile(uploadPath, file.buffer);
-
-    const avatarUrl = `/uploads/avatars/${filename}`;
-
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { avatarUrl },
-    });
-
-    return { avatarUrl };
+    return res.sendFile(filePath);
   }
 }
 </file>
@@ -3251,6 +3031,243 @@ export class CreateNewsDto {
 }
 </file>
 
+<file path="src/users/users.controller.ts">
+import { 
+  Controller, 
+  Get, 
+  Patch, 
+  Delete, 
+  Post, 
+  Body, 
+  Param, 
+  Query, 
+  UseGuards, 
+  ParseIntPipe, 
+  DefaultValuePipe, 
+  Req, 
+  UseInterceptors, 
+  UploadedFile, 
+  ParseFilePipe, 
+  MaxFileSizeValidator, 
+  FileTypeValidator 
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Request } from 'express';
+import { UsersService } from './users.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Role } from '@prisma/client';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+
+interface RequestWithUser extends Request {
+  user: {
+    sub: string;
+    email: string;
+    role: Role;
+  };
+}
+
+@ApiTags('Users')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('users')
+export class UsersController {
+  constructor(private readonly usersService: UsersService) {}
+
+  @ApiOperation({ summary: 'Отримати список користувачів з пагінацією та пошуком (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Get()
+  findAll(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('search') search?: string,
+  ) {
+    return this.usersService.findAll(page, limit, search);
+  }
+
+  @ApiOperation({ summary: 'Отримати профіль поточного користувача' })
+  @Get('me')
+  async getMe(@Req() req: RequestWithUser) {
+    return this.usersService.getMe(req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Оновити аватар поточного користувача' })
+  @Patch('me/avatar')
+  @UseInterceptors(FileInterceptor('file'))
+  async updateAvatar(
+    @Req() req: RequestWithUser,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
+          new FileTypeValidator({ fileType: '.(png|jpeg|jpg|webp)' }),
+        ],
+      }),
+    ) file: Express.Multer.File,
+  ) {
+    return this.usersService.updateAvatar(req.user.sub, file);
+  }
+
+  @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+    return this.usersService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Повністю видалити користувача з бази даних (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.usersService.remove(id);
+  }
+
+  @ApiOperation({ summary: 'Скинути пароль користувача вручну (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Post(':id/reset-password')
+  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
+    return this.usersService.resetPassword(id, dto.newPassword);
+  }
+}
+</file>
+
+<file path="src/users/users.service.ts">
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
+import * as fs from 'fs/promises';
+import { join, extname } from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { UpdateUserDto } from './dto/update-user.dto';
+import * as bcrypt from 'bcrypt';
+
+@Injectable()
+export class UsersService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async findAll(page: number, limit: number, search?: string) {
+    const skip = (page - 1) * limit;
+    
+    const where: Prisma.UserWhereInput = {};
+    if (search) {
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          avatarUrl: true,
+          isActive: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        lastPage: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async update(id: string, dto: UpdateUserDto) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Користувача не знайдено');
+
+    return this.prisma.user.update({
+      where: { id },
+      data: dto,
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        isActive: true,
+      },
+    });
+  }
+
+  async remove(id: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Користувача не знайдено');
+
+    await this.prisma.user.delete({ where: { id } });
+    return { message: 'Користувача успішно видалено з системи' };
+  }
+
+  async resetPassword(id: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('Користувача не знайдено');
+
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    await this.prisma.user.update({
+      where: { id },
+      data: { passwordHash: hashedPassword },
+    });
+
+    return { message: 'Пароль успішно скинуто' };
+  }
+
+  async getMe(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const { passwordHash, ...safeUser } = user;
+    return safeUser;
+  }
+
+  async updateAvatar(userId: string, file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+
+    const filename = `${uuidv4()}${extname(file.originalname)}`;
+    const uploadDir = join(process.cwd(), 'uploads', 'avatars');
+    const uploadPath = join(uploadDir, filename);
+
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(uploadPath, file.buffer);
+
+    const avatarUrl = `/uploads/avatars/${filename}`;
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl },
+    });
+
+    return { avatarUrl };
+  }
+}
+</file>
+
 <file path="src/polls/polls.controller.ts">
 import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, Patch, Delete } from '@nestjs/common';
 import { PollsService } from './polls.service';
@@ -3793,48 +3810,6 @@ export class PollsService {
 }
 </file>
 
-<file path="src/app.module.ts">
-import { Module } from '@nestjs/common';
-import { ScheduleModule } from '@nestjs/schedule';
-import { APP_FILTER } from '@nestjs/core';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { PrismaModule } from './prisma/prisma.module';
-import { AuthModule } from './auth/auth.module';
-import { NewsModule } from './news/news.module';
-import { DepartmentsModule } from './departments/departments.module';
-import { DocumentsModule } from './documents/documents.module';
-import { ProjectsModule } from './projects/projects.module';
-import { PollsModule } from './polls/polls.module';
-import { ChatModule } from './chat/chat.module';
-import { UsersModule } from './users/users.module';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-
-@Module({
-  imports: [
-    ScheduleModule.forRoot(),
-    PrismaModule,
-    AuthModule,
-    NewsModule, 
-    DepartmentsModule, 
-    DocumentsModule, 
-    ProjectsModule, 
-    PollsModule, 
-    ChatModule, 
-    UsersModule
-  ],
-  controllers: [AppController],
-  providers: [
-    AppService,
-    {
-      provide: APP_FILTER,
-      useClass: AllExceptionsFilter,
-    },
-  ],
-})
-export class AppModule {}
-</file>
-
 <file path="src/news/news.controller.ts">
 import { 
   Controller, Get, Post, Patch, Delete, Body, Param, 
@@ -4086,6 +4061,48 @@ export class NewsController {
     return this.newsService.vote(id, req.user.sub, dto.voteType);
   }
 }
+</file>
+
+<file path="src/app.module.ts">
+import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
+import { APP_FILTER } from '@nestjs/core';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
+import { NewsModule } from './news/news.module';
+import { DepartmentsModule } from './departments/departments.module';
+import { DocumentsModule } from './documents/documents.module';
+import { ProjectsModule } from './projects/projects.module';
+import { PollsModule } from './polls/polls.module';
+import { ChatModule } from './chat/chat.module';
+import { UsersModule } from './users/users.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+
+@Module({
+  imports: [
+    ScheduleModule.forRoot(),
+    PrismaModule,
+    AuthModule,
+    NewsModule, 
+    DepartmentsModule, 
+    DocumentsModule, 
+    ProjectsModule, 
+    PollsModule, 
+    ChatModule, 
+    UsersModule
+  ],
+  controllers: [AppController],
+  providers: [
+    AppService,
+    {
+      provide: APP_FILTER,
+      useClass: AllExceptionsFilter,
+    },
+  ],
+})
+export class AppModule {}
 </file>
 
 <file path="src/news/news.service.ts">

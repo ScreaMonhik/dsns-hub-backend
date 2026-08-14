@@ -34,6 +34,18 @@ enum PollStatus {
   ARCHIVED
 }
 
+enum DocumentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ProjectStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model NewsCategory {
   id         String @id @default(uuid())
   name       String @unique
@@ -65,6 +77,7 @@ model User {
   pollVotes    PollVote[]
   chatGroups   GroupMember[]
   readMessages MessageReadReceipt[]
+  documents    Document[]
 }
 
 model Department {
@@ -74,6 +87,7 @@ model Department {
   polls      Poll[]
   chatGroups ChatGroup[]
   news       News[]
+  projects   Project[]
 }
 
 model News {
@@ -117,26 +131,35 @@ model NewsVote {
 }
 
 model Document {
-  id        String   @id @default(uuid())
-  title     String
-  fileUrl   String
-  createdAt DateTime @default(now())
+  id          String         @id @default(uuid())
+  title       String
+  description String?        @db.Text
+  fileUrl     String
+  status      DocumentStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
+  authorId    String?
+  author      User?          @relation(fields: [authorId], references: [id])
+
+  departments Department[]
 }
 
 model Project {
-  id          String   @id @default(uuid())
+  id          String        @id @default(uuid())
   title       String
-  description String
-  createdAt   DateTime @default(now())
+  description String        @db.Text
+  fileUrl     String
+  status      ProjectStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id])
+  authorId    String
+  author      User          @relation(fields: [authorId], references: [id])
 
-  comments ProjectComment[]
-  votes    ProjectVote[]
+  departments Department[]
+  comments    ProjectComment[]
+  votes       ProjectVote[]
 }
 
 model ProjectComment {
