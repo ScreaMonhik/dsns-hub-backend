@@ -11,13 +11,14 @@ import { Server, Socket } from 'socket.io';
 import { UseGuards } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
+import { WsThrottlerGuard } from '../common/guards/ws-throttler.guard';
 import { SendMessageDto, EditMessageDto, DeleteMessageDto, MarkAsReadDto } from './dto/chat-message.dto';
 
 @WebSocketGateway({
   cors: { origin: '*' }, 
   namespace: '/chat',
 })
-@UseGuards(WsJwtGuard)
+@UseGuards(WsJwtGuard, WsThrottlerGuard)
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;

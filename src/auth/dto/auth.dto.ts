@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, Matches } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RegisterDto {
@@ -7,9 +7,11 @@ export class RegisterDto {
   @IsNotEmpty({ message: 'Email не може бути порожнім' })
   email!: string;
 
-  @ApiProperty({ example: 'SuperSecretPassword123', description: 'Пароль (мінімум 6 символів)' })
+  @ApiProperty({ example: 'SuperSecret1!', description: 'Пароль (мінімум 8 символів, велика та мала літера, цифра, спецсимвол)' })
   @IsString()
-  @MinLength(6, { message: 'Пароль має містити щонайменше 6 символів' })
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, {
+    message: 'Пароль має містити щонайменше 8 символів, одну велику літеру, одну малу літеру, одну цифру та один спеціальний символ (@$!%*?&)',
+  })
   @IsNotEmpty()
   password!: string;
 
