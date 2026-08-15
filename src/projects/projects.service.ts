@@ -86,7 +86,10 @@ export class ProjectsService {
         include: {
           author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
           departments: { select: { id: true, name: true } },
-          votes: { select: { voteType: true, userId: true } },
+          votes: { 
+            where: { userId: user.sub },
+            select: { voteType: true } 
+          },
           _count: { select: { comments: true } },
         },
       }),
@@ -94,16 +97,13 @@ export class ProjectsService {
     ]);
 
     const mappedData = projects.map((project) => {
-      const upvotes = project.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
-      const downvotes = project.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
-      const currentUserVote = project.votes.find((v) => v.userId === user.sub)?.voteType || null;
-
-      const { votes, ...rest } = project;
+      const { votes, upvotesCount, downvotesCount, ...rest } = project;
+      const currentUserVote = votes.length > 0 ? votes[0].voteType : null;
 
       return {
         ...rest,
-        upvotes,
-        downvotes,
+        upvotes: upvotesCount,
+        downvotes: downvotesCount,
         currentUserVote,
       };
     });
@@ -131,7 +131,10 @@ export class ProjectsService {
             author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
           },
         },
-        votes: true,
+        votes: {
+          where: { userId: user.sub },
+          select: { voteType: true }
+        },
       },
     });
 
@@ -141,11 +144,15 @@ export class ProjectsService {
       throw new ForbiddenException('Access denied to unpublished or archived project');
     }
 
-    const upvotes = project.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
-    const downvotes = project.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
-    const currentUserVote = project.votes.find((v) => v.userId === user.sub)?.voteType || null;
+    const { votes, upvotesCount, downvotesCount, ...rest } = project;
+    const currentUserVote = votes.length > 0 ? votes[0].voteType : null;
 
-    return { ...project, upvotes, downvotes, currentUserVote };
+    return { 
+      ...rest, 
+      upvotes: upvotesCount, 
+      downvotes: downvotesCount, 
+      currentUserVote 
+    };
   }
 
   async update(id: string, dto: UpdateProjectDto, userId: string) {
@@ -332,28 +339,46 @@ export class ProjectsService {
   async vote(projectId: string, userId: string, voteType: VoteType, user: { sub: string; role: Role }) {
     await this.findOne(projectId, user);
 
-    const existingVote = await this.prisma.projectVote.findUnique({
-      where: { userId_projectId: { userId, projectId } },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const existingVote = await tx.projectVote.findUnique({
+        where: { userId_projectId: { userId, projectId } },
+      });
 
-    if (existingVote) {
-      if (existingVote.voteType === voteType) {
-        await this.prisma.projectVote.delete({
-          where: { userId_projectId: { userId, projectId } },
-        });
-        return { message: 'Голос видалено' };
-      } else {
-        await this.prisma.projectVote.update({
-          where: { userId_projectId: { userId, projectId } },
-          data: { voteType },
-        });
-        return { message: 'Голос змінено' };
+      if (existingVote) {
+        if (existingVote.voteType === voteType) {
+          await tx.projectVote.delete({ where: { userId_projectId: { userId, projectId } } });
+          await tx.project.update({
+            where: { id: projectId },
+            data: {
+              ...(voteType === VoteType.UPVOTE ? { upvotesCount: { decrement: 1 } } : { downvotesCount: { decrement: 1 } }),
+            },
+          });
+          return { message: 'Голос видалено' };
+        } else {
+          await tx.projectVote.update({
+            where: { userId_projectId: { userId, projectId } },
+            data: { voteType },
+          });
+          await tx.project.update({
+            where: { id: projectId },
+            data: {
+              ...(voteType === VoteType.UPVOTE 
+                ? { upvotesCount: { increment: 1 }, downvotesCount: { decrement: 1 } } 
+                : { upvotesCount: { decrement: 1 }, downvotesCount: { increment: 1 } }),
+            },
+          });
+          return { message: 'Голос змінено' };
+        }
       }
-    }
 
-    await this.prisma.projectVote.create({
-      data: { projectId, userId, voteType },
+      await tx.projectVote.create({ data: { projectId, userId, voteType } });
+      await tx.project.update({
+        where: { id: projectId },
+        data: {
+          ...(voteType === VoteType.UPVOTE ? { upvotesCount: { increment: 1 } } : { downvotesCount: { increment: 1 } }),
+        },
+      });
+      return { message: 'Голос зараховано' };
     });
-    return { message: 'Голос зараховано' };
   }
 }

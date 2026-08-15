@@ -74,8 +74,10 @@ export class NewsService {
 
     if (finalSortBy === 'comments') {
       orderBy = { comments: { _count: finalSortOrder } };
-    } else if (finalSortBy === 'likes' || finalSortBy === 'dislikes') {
-      orderBy = { votes: { _count: finalSortOrder } };
+    } else if (finalSortBy === 'likes') {
+      orderBy = { upvotesCount: finalSortOrder };
+    } else if (finalSortBy === 'dislikes') {
+      orderBy = { downvotesCount: finalSortOrder };
     } else {
       orderBy = { [finalSortBy]: finalSortOrder };
     }
@@ -92,7 +94,10 @@ export class NewsService {
           },
           category: true,
           departments: { select: { id: true, name: true } },
-          votes: { select: { voteType: true, userId: true, newsId: true } },
+          votes: { 
+            where: { userId: user.sub },
+            select: { voteType: true } 
+          },
           _count: { select: { comments: true } },
         },
       }),
@@ -100,21 +105,19 @@ export class NewsService {
     ]);
 
     const mappedData = articles.map((article) => {
-      const upvotes = article.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
-      const downvotes = article.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
-      const currentUserVotes = article.votes.filter((v) => v.userId === user.sub);
-      
-      const { votes, ...rest } = article;
+      const { votes, upvotesCount, downvotesCount, ...rest } = article;
+      const currentUserVote = votes.length > 0 ? votes[0].voteType : null;
       
       return { 
         ...rest,
-        votes: currentUserVotes,
-        upvotes,
-        downvotes,
+        votes: votes,
+        upvotes: upvotesCount,
+        downvotes: downvotesCount,
+        currentUserVote,
         _count: {
           comments: article._count.comments,
-          likes: upvotes,
-          dislikes: downvotes,
+          likes: upvotesCount,
+          dislikes: downvotesCount,
         }
       };
     });
@@ -145,7 +148,10 @@ export class NewsService {
             },
           },
         },
-        votes: true,
+        votes: {
+          where: { userId: user?.sub || 'unauthenticated' },
+          select: { voteType: true }
+        },
       },
     });
 
@@ -155,11 +161,16 @@ export class NewsService {
       throw new ForbiddenException('Access denied to unpublished or archived news');
     }
 
-    const upvotes = news.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
-    const downvotes = news.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
-    const commentsCount = news.comments.length;
+    const { votes, upvotesCount, downvotesCount, ...rest } = news;
+    const currentUserVote = votes.length > 0 ? votes[0].voteType : null;
 
-    return { ...news, upvotes, downvotes, _count: { comments: commentsCount } };
+    return { 
+      ...rest, 
+      upvotes: upvotesCount, 
+      downvotes: downvotesCount, 
+      currentUserVote,
+      _count: { comments: news.comments.length } 
+    };
   }
 
   async update(id: string, dto: UpdateNewsDto, userId: string) {
@@ -323,28 +334,46 @@ export class NewsService {
   async vote(newsId: string, userId: string, voteType: VoteType, user?: { sub: string; role: Role }) {
     await this.findOne(newsId, user);
 
-    const existingVote = await this.prisma.newsVote.findUnique({
-      where: { userId_newsId: { userId, newsId } },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const existingVote = await tx.newsVote.findUnique({
+        where: { userId_newsId: { userId, newsId } },
+      });
 
-    if (existingVote) {
-      if (existingVote.voteType === voteType) {
-        await this.prisma.newsVote.delete({
-          where: { userId_newsId: { userId, newsId } },
-        });
-        return { message: 'Голос видалено' };
-      } else {
-        await this.prisma.newsVote.update({
-          where: { userId_newsId: { userId, newsId } },
-          data: { voteType },
-        });
-        return { message: 'Голос змінено' };
+      if (existingVote) {
+        if (existingVote.voteType === voteType) {
+          await tx.newsVote.delete({ where: { userId_newsId: { userId, newsId } } });
+          await tx.news.update({
+            where: { id: newsId },
+            data: {
+              ...(voteType === VoteType.UPVOTE ? { upvotesCount: { decrement: 1 } } : { downvotesCount: { decrement: 1 } }),
+            },
+          });
+          return { message: 'Голос видалено' };
+        } else {
+          await tx.newsVote.update({
+            where: { userId_newsId: { userId, newsId } },
+            data: { voteType },
+          });
+          await tx.news.update({
+            where: { id: newsId },
+            data: {
+              ...(voteType === VoteType.UPVOTE 
+                ? { upvotesCount: { increment: 1 }, downvotesCount: { decrement: 1 } } 
+                : { upvotesCount: { decrement: 1 }, downvotesCount: { increment: 1 } }),
+            },
+          });
+          return { message: 'Голос змінено' };
+        }
       }
-    }
 
-    await this.prisma.newsVote.create({
-      data: { userId, newsId, voteType },
+      await tx.newsVote.create({ data: { userId, newsId, voteType } });
+      await tx.news.update({
+        where: { id: newsId },
+        data: {
+          ...(voteType === VoteType.UPVOTE ? { upvotesCount: { increment: 1 } } : { downvotesCount: { increment: 1 } }),
+        },
+      });
+      return { message: 'Голос зараховано' };
     });
-    return { message: 'Голос зараховано' };
   }
 }

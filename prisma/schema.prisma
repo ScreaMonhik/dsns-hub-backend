@@ -124,9 +124,11 @@ model News {
   title        String
   content      String        @db.Text
   imageUrl     String?
-  status       NewsStatus    @default(PUBLISHED)
-  categoryId   String?
-  category     NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  status         NewsStatus    @default(PUBLISHED)
+  upvotesCount   Int           @default(0)
+  downvotesCount Int           @default(0)
+  categoryId     String?
+  category       NewsCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   departments  Department[]
   createdAt    DateTime      @default(now())
 
@@ -188,9 +190,11 @@ model Project {
   title       String
   description String        @db.Text
   fileUrl     String
-  status      ProjectStatus @default(DRAFT)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  status         ProjectStatus @default(DRAFT)
+  upvotesCount   Int           @default(0)
+  downvotesCount Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   authorId    String
   author      User          @relation(fields: [authorId], references: [id])
