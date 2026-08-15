@@ -53,13 +53,13 @@ export class PollsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.pollsService.findAll(req.user.sub, departmentId, status, sortBy, sortOrder, page, limit);
+    return this.pollsService.findAll(req.user, departmentId, status, sortBy, sortOrder, page, limit);
   }
 
   @ApiOperation({ summary: 'Отримати конкретне опитування' })
   @Get(':id')
   findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
-    return this.pollsService.findOne(id, req.user.sub);
+    return this.pollsService.findOne(id, req.user);
   }
 
   @ApiOperation({ summary: 'Проголосувати в опитуванні' })
@@ -69,6 +69,6 @@ export class PollsController {
     @Req() req: RequestWithUser,
     @Body() dto: VotePollDto,
   ) {
-    return this.pollsService.vote(id, req.user.sub, dto.optionId);
+    return this.pollsService.vote(id, req.user, dto.optionId);
   }
 }

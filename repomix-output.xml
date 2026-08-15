@@ -74,6 +74,10 @@ src/
   common/
     filters/
       all-exceptions.filter.ts
+    guards/
+      ws-throttler.guard.ts
+    interceptors/
+      audit.interceptor.ts
   departments/
     dto/
       create-department.dto.ts
@@ -85,6 +89,8 @@ src/
   documents/
     dto/
       create-document.dto.ts
+      query-document.dto.ts
+      update-document.dto.ts
     documents.controller.spec.ts
     documents.controller.ts
     documents.module.ts
@@ -123,12 +129,18 @@ src/
     dto/
       create-project-comment.dto.ts
       create-project.dto.ts
+      query-project.dto.ts
+      update-project.dto.ts
       vote-project.dto.ts
     projects.controller.spec.ts
     projects.controller.ts
     projects.module.ts
     projects.service.spec.ts
     projects.service.ts
+  security/
+    file-security.service.spec.ts
+    file-security.service.ts
+    security.module.ts
   users/
     dto/
       reset-password.dto.ts
@@ -182,7 +194,6 @@ eslint.config.mjs
 nest-cli.json
 package.json
 README.md
-tree.txt
 tsconfig.build.json
 tsconfig.json
 </directory_structure>
@@ -260,27 +271,6 @@ describe('AuthController', () => {
     expect(controller).toBeDefined();
   });
 });
-</file>
-
-<file path="src/auth/auth.controller.ts">
-import { Controller, Post, Body } from '@nestjs/common';
-import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto } from './dto/auth.dto';
-
-@Controller('auth')
-export class AuthController {
-  constructor(private readonly authService: AuthService) {}
-
-  @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
-  }
-
-  @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
-  }
-}
 </file>
 
 <file path="src/auth/auth.module.ts">
@@ -482,6 +472,80 @@ export class AllExceptionsFilter implements ExceptionFilter {
 }
 </file>
 
+<file path="src/common/guards/ws-throttler.guard.ts">
+import { ExecutionContext, Injectable } from '@nestjs/common';
+import { ThrottlerGuard, ThrottlerRequest } from '@nestjs/throttler';
+import { WsException } from '@nestjs/websockets';
+
+@Injectable()
+export class WsThrottlerGuard extends ThrottlerGuard {
+  protected async handleRequest(requestProps: ThrottlerRequest): Promise<boolean> {
+    const { context, limit, ttl, throttler } = requestProps;
+    const client = context.switchToWs().getClient();
+    
+    // Fallback to connection remote address if handshake address is missing
+    const ip = client.handshake?.address || client.conn?.remoteAddress || 'unknown';
+    
+    const name = (throttler.name as string) || 'default';
+    const blockDuration = (throttler.blockDuration as number) || 0;
+
+    const key = this.generateKey(context, ip, name);
+    
+    const { totalHits } = await this.storageService.increment(
+      key,
+      ttl,
+      limit,
+      blockDuration,
+      name,
+    );
+
+    if (totalHits > limit) {
+      throw new WsException('Перевищено ліміт запитів (Rate Limit). Зачекайте хвилину.');
+    }
+
+    return true;
+  }
+}
+</file>
+
+<file path="src/common/interceptors/audit.interceptor.ts">
+import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class AuditInterceptor implements NestInterceptor {
+  constructor(private readonly prisma: PrismaService) {}
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const req = context.switchToHttp().getRequest();
+    
+    if (req && ['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) {
+        const userId = req.user?.sub || null;
+        const body = { ...req.body };
+        
+        // Sanitize sensitive data before logging
+        if (body.password) body.password = '***';
+        if (body.newPassword) body.newPassword = '***';
+        if (body.refreshToken) body.refreshToken = '***';
+
+        // Fire and forget API log to avoid blocking the request
+        this.prisma.apiAuditLog.create({
+            data: {
+                method: req.method,
+                url: req.url,
+                payload: Object.keys(body).length ? body : null,
+                ipAddress: req.ip || null,
+                userId,
+            }
+        }).catch((err) => console.error('Global Audit Log Error:', err));
+    }
+
+    return next.handle();
+  }
+}
+</file>
+
 <file path="src/departments/dto/create-department.dto.ts">
 import { IsString, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
@@ -611,20 +675,76 @@ export class DepartmentsService {
 }
 </file>
 
-<file path="src/documents/dto/create-document.dto.ts">
-import { IsString, IsNotEmpty, IsUUID } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+<file path="src/documents/dto/query-document.dto.ts">
+import { IsOptional, IsEnum, IsString, IsUUID } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { DocumentStatus } from '@prisma/client';
 
-export class CreateDocumentDto {
-  @ApiProperty({ description: 'Назва документа', example: 'Інструкція з пожежної безпеки' })
+export class QueryDocumentDto {
+  @ApiPropertyOptional({ description: 'Фільтр за ID підрозділу', format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  departmentId?: string;
+
+  @ApiPropertyOptional({ description: 'Фільтр за статусом', enum: DocumentStatus })
+  @IsEnum(DocumentStatus)
+  @IsOptional()
+  status?: DocumentStatus;
+
+  @ApiPropertyOptional({ description: 'Пошуковий запит по назві/опису' })
   @IsString()
-  @IsNotEmpty()
-  title!: string;
+  @IsOptional()
+  search?: string;
 
-  @ApiProperty({ description: 'ID підрозділу', format: 'uuid' })
-  @IsUUID()
-  @IsNotEmpty()
-  departmentId!: string;
+  @ApiPropertyOptional({ description: 'Номер сторінки', example: '1' })
+  @IsOptional()
+  page?: string;
+
+  @ApiPropertyOptional({ description: 'Кількість елементів на сторінці', example: '10' })
+  @IsOptional()
+  limit?: string;
+}
+</file>
+
+<file path="src/documents/dto/update-document.dto.ts">
+import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsOptional, IsEnum, IsArray, IsUUID } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { DocumentStatus } from '@prisma/client';
+import { CreateDocumentDto } from './create-document.dto';
+
+export class UpdateDocumentDto extends PartialType(CreateDocumentDto) {
+  @ApiPropertyOptional({ description: 'Назва документа' })
+  @IsString()
+  @IsOptional()
+  title?: string;
+
+  @ApiPropertyOptional({ description: 'Опис документа' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Статус документа', enum: DocumentStatus })
+  @IsEnum(DocumentStatus)
+  @IsOptional()
+  status?: DocumentStatus;
+
+  @ApiPropertyOptional({ description: 'Масив ID підрозділів', type: [String] })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        return Array.isArray(parsed) ? parsed : [value];
+      } catch {
+        return [value];
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  departmentIds?: string[];
 }
 </file>
 
@@ -680,44 +800,6 @@ describe('DocumentsService', () => {
     expect(service).toBeDefined();
   });
 });
-</file>
-
-<file path="src/documents/documents.service.ts">
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-
-@Injectable()
-export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  async uploadDocument(title: string, departmentId: string, fileUrl: string) {
-    const department = await this.prisma.department.findUnique({
-      where: { id: departmentId },
-    });
-
-    if (!department) {
-      throw new NotFoundException('Вказаний підрозділ не знайдено');
-    }
-
-    return this.prisma.document.create({
-      data: {
-        title,
-        fileUrl,
-        departmentId,
-      },
-    });
-  }
-
-  async findAll(departmentId?: string) {
-    return this.prisma.document.findMany({
-      where: departmentId ? { departmentId } : {},
-      include: {
-        department: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-}
 </file>
 
 <file path="src/news/dto/create-category.dto.ts">
@@ -992,20 +1074,76 @@ export class CreateProjectCommentDto {
 }
 </file>
 
-<file path="src/projects/dto/create-project.dto.ts">
-import { IsString, IsNotEmpty } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+<file path="src/projects/dto/query-project.dto.ts">
+import { IsOptional, IsEnum, IsString, IsUUID } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ProjectStatus } from '@prisma/client';
 
-export class CreateProjectDto {
-  @ApiProperty({ description: 'Назва проєкту', example: 'Оновлення системи оповіщення' })
-  @IsString()
-  @IsNotEmpty()
-  title!: string;
+export class QueryProjectDto {
+  @ApiPropertyOptional({ description: 'Фільтр за ID підрозділу', format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  departmentId?: string;
 
-  @ApiProperty({ description: 'Опис проєкту', example: 'Пропоную замінити старі сирени на нові цифрові...' })
+  @ApiPropertyOptional({ description: 'Фільтр за статусом', enum: ProjectStatus })
+  @IsEnum(ProjectStatus)
+  @IsOptional()
+  status?: ProjectStatus;
+
+  @ApiPropertyOptional({ description: 'Пошуковий запит по назві/опису' })
   @IsString()
-  @IsNotEmpty()
-  description!: string;
+  @IsOptional()
+  search?: string;
+
+  @ApiPropertyOptional({ description: 'Номер сторінки', example: '1' })
+  @IsOptional()
+  page?: string;
+
+  @ApiPropertyOptional({ description: 'Кількість елементів на сторінці', example: '10' })
+  @IsOptional()
+  limit?: string;
+}
+</file>
+
+<file path="src/projects/dto/update-project.dto.ts">
+import { PartialType, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsOptional, IsEnum, IsArray, IsUUID } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { ProjectStatus } from '@prisma/client';
+import { CreateProjectDto } from './create-project.dto';
+
+export class UpdateProjectDto extends PartialType(CreateProjectDto) {
+  @ApiPropertyOptional({ description: 'Назва проєкту' })
+  @IsString()
+  @IsOptional()
+  title?: string;
+
+  @ApiPropertyOptional({ description: 'Опис проєкту' })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Статус проєкту', enum: ProjectStatus })
+  @IsEnum(ProjectStatus)
+  @IsOptional()
+  status?: ProjectStatus;
+
+  @ApiPropertyOptional({ description: 'Масив ID підрозділів', type: [String] })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        return Array.isArray(parsed) ? parsed : [value];
+      } catch {
+        return [value];
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  departmentIds?: string[];
 }
 </file>
 
@@ -1043,72 +1181,6 @@ describe('ProjectsController', () => {
 });
 </file>
 
-<file path="src/projects/projects.controller.ts">
-import { Controller, Get, Post, Body, Param, UseGuards, Req } from '@nestjs/common';
-import { ProjectsService } from './projects.service';
-import { CreateProjectDto } from './dto/create-project.dto';
-import { CreateProjectCommentDto } from './dto/create-project-comment.dto';
-import { VoteProjectDto } from './dto/vote-project.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { Request } from 'express';
-import { Role } from '@prisma/client';
-
-interface RequestWithUser extends Request {
-  user: { sub: string; email: string; role: Role };
-}
-
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-
-@ApiTags('Projects')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('projects')
-export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
-
-  @ApiOperation({ summary: 'Створити новий проєкт/ініціативу (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
-  @Post()
-  create(@Req() req: RequestWithUser, @Body() dto: CreateProjectDto) {
-    return this.projectsService.create(req.user.sub, dto);
-  }
-
-  @ApiOperation({ summary: 'Отримати список всіх проєктів' })
-  @Get()
-  findAll() {
-    return this.projectsService.findAll();
-  }
-
-  @ApiOperation({ summary: 'Отримати деталі проєкту разом з коментарями та голосами' })
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.projectsService.findOne(id);
-  }
-
-  @ApiOperation({ summary: 'Додати коментар до проєкту' })
-  @Post(':id/comments')
-  addComment(
-    @Param('id') id: string,
-    @Req() req: RequestWithUser,
-    @Body() dto: CreateProjectCommentDto,
-  ) {
-    return this.projectsService.addComment(id, req.user.sub, dto.content);
-  }
-
-  @ApiOperation({ summary: 'Проголосувати за проєкт (UPVOTE / DOWNVOTE)' })
-  @Post(':id/vote')
-  vote(
-    @Param('id') id: string,
-    @Req() req: RequestWithUser,
-    @Body() dto: VoteProjectDto,
-  ) {
-    return this.projectsService.vote(id, req.user.sub, dto.voteType);
-  }
-}
-</file>
-
 <file path="src/projects/projects.module.ts">
 import { Module } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
@@ -1142,111 +1214,37 @@ describe('ProjectsService', () => {
 });
 </file>
 
-<file path="src/projects/projects.service.ts">
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateProjectDto } from './dto/create-project.dto';
-import { VoteType } from '@prisma/client';
+<file path="src/security/file-security.service.spec.ts">
+import { Test, TestingModule } from '@nestjs/testing';
+import { FileSecurityService } from './file-security/file-security.service';
 
-@Injectable()
-export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+describe('FileSecurityService', () => {
+  let service: FileSecurityService;
 
-  async create(authorId: string, dto: CreateProjectDto) {
-    return this.prisma.project.create({
-      data: {
-        title: dto.title,
-        description: dto.description,
-        authorId,
-      },
-    });
-  }
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [FileSecurityService],
+    }).compile();
 
-  async findAll() {
-    return this.prisma.project.findMany({
-      orderBy: { createdAt: 'desc' },
-      include: {
-        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-        _count: { select: { comments: true, votes: true } },
-      },
-    });
-  }
+    service = module.get<FileSecurityService>(FileSecurityService);
+  });
 
-  async findOne(id: string) {
-    const project = await this.prisma.project.findUnique({
-      where: { id },
-      include: {
-        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-        comments: {
-          orderBy: { createdAt: 'desc' },
-          include: {
-            author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
-          },
-        },
-        votes: true,
-      },
-    });
-
-    if (!project) throw new NotFoundException('Проєкт не знайдено');
-
-    // Рахуємо голоси: UPVOTE та DOWNVOTE
-    const upvotes = project.votes.filter(v => v.voteType === VoteType.UPVOTE).length;
-    const downvotes = project.votes.filter(v => v.voteType === VoteType.DOWNVOTE).length;
-
-    return { ...project, upvotes, downvotes };
-  }
-
-  async addComment(projectId: string, authorId: string, content: string) {
-    await this.findOne(projectId); // Перевірка існування
-    return this.prisma.projectComment.create({
-      data: { content, authorId, projectId },
-    });
-  }
-
-  async vote(projectId: string, userId: string, voteType: VoteType) {
-    await this.findOne(projectId); // Перевірка існування
-
-    const existingVote = await this.prisma.projectVote.findUnique({
-      where: { userId_projectId: { userId, projectId } },
-    });
-
-    if (existingVote) {
-      if (existingVote.voteType === voteType) {
-        // Якщо користувач натиснув ту саму кнопку - забираємо голос
-        await this.prisma.projectVote.delete({
-          where: { userId_projectId: { userId, projectId } },
-        });
-        return { message: 'Голос видалено' };
-      } else {
-        // Якщо користувач змінив голос (наприклад з UPVOTE на DOWNVOTE)
-        await this.prisma.projectVote.update({
-          where: { userId_projectId: { userId, projectId } },
-          data: { voteType },
-        });
-        return { message: 'Голос змінено' };
-      }
-    }
-
-    // Якщо голосу не було
-    await this.prisma.projectVote.create({
-      data: { projectId, userId, voteType },
-    });
-    return { message: 'Голос зараховано' };
-  }
-}
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+});
 </file>
 
-<file path="src/users/dto/reset-password.dto.ts">
-import { IsString, MinLength, IsNotEmpty } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+<file path="src/security/security.module.ts">
+import { Global, Module } from '@nestjs/common';
+import { FileSecurityService } from './file-security.service';
 
-export class ResetPasswordDto {
-  @ApiProperty({ description: 'Новий пароль для користувача', example: 'NewSecurePassword123' })
-  @IsString()
-  @MinLength(6, { message: 'Пароль має містити щонайменше 6 символів' })
-  @IsNotEmpty()
-  newPassword!: string;
-}
+@Global()
+@Module({
+  providers: [FileSecurityService],
+  exports: [FileSecurityService],
+})
+export class SecurityModule {}
 </file>
 
 <file path="src/users/dto/update-user.dto.ts">
@@ -1590,46 +1588,6 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 }
 </file>
 
-<file path="src/auth/dto/auth.dto.ts">
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-
-export class RegisterDto {
-  @ApiProperty({ example: 'admin@dsns.gov.ua', description: 'Службова пошта' })
-  @IsEmail({}, { message: 'Некоректний формат email' })
-  @IsNotEmpty({ message: 'Email не може бути порожнім' })
-  email!: string;
-
-  @ApiProperty({ example: 'SuperSecretPassword123', description: 'Пароль (мінімум 6 символів)' })
-  @IsString()
-  @MinLength(6, { message: 'Пароль має містити щонайменше 6 символів' })
-  @IsNotEmpty()
-  password!: string;
-
-  @ApiProperty({ example: 'Іван' })
-  @IsString()
-  @IsNotEmpty({ message: 'Ім\'я не може бути порожнім' })
-  firstName!: string;
-
-  @ApiProperty({ example: 'Іванов' })
-  @IsString()
-  @IsNotEmpty({ message: 'Прізвище не може бути порожнім' })
-  lastName!: string;
-}
-
-export class LoginDto {
-  @ApiProperty({ example: 'admin@dsns.gov.ua' })
-  @IsEmail({}, { message: 'Некоректний формат email' })
-  @IsNotEmpty()
-  email!: string;
-
-  @ApiProperty({ example: 'SuperSecretPassword123' })
-  @IsString()
-  @IsNotEmpty()
-  password!: string;
-}
-</file>
-
 <file path="src/auth/guards/jwt-auth.guard.ts">
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -1734,6 +1692,66 @@ export class WsJwtGuard implements CanActivate {
 }
 </file>
 
+<file path="src/auth/auth.controller.ts">
+import { Controller, Post, Body, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
+import { AuthService } from './auth.service';
+import { RegisterDto, LoginDto, RefreshTokenDto } from './dto/auth.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Role } from '@prisma/client';
+
+interface RequestWithUser extends Request {
+  user: { sub: string; email: string; role: Role };
+}
+
+@ApiTags('Auth')
+@Controller('auth')
+export class AuthController {
+  constructor(
+    private readonly authService: AuthService,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  @ApiOperation({ summary: 'Реєстрація нового співробітника' })
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('register')
+  register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
+  }
+
+  @ApiOperation({ summary: 'Вхід у систему' })
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('login')
+  login(@Body() dto: LoginDto) {
+    return this.authService.login(dto);
+  }
+
+  @ApiOperation({ summary: 'Вихід із системи (анулювання Refresh Token)' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  logout(@Req() req: RequestWithUser) {
+    return this.authService.logout(req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Оновлення токенів доступу' })
+  @Post('refresh')
+  async refreshTokens(@Body() dto: RefreshTokenDto) {
+    try {
+      const payload = await this.jwtService.verifyAsync(dto.refreshToken, {
+        secret: 'super-secret-refresh-key', // TODO: Move to .env
+      });
+      return this.authService.refreshTokens(payload.sub, dto.refreshToken);
+    } catch (e) {
+      throw new UnauthorizedException('Недійсний або протермінований Refresh Token');
+    }
+  }
+}
+</file>
+
 <file path="src/chat/dto/chat-message.dto.ts">
 import { IsString, IsNotEmpty, IsUUID } from 'class-validator';
 
@@ -1808,126 +1826,44 @@ export class CreateGroupDto {
 }
 </file>
 
-<file path="src/documents/documents.controller.ts">
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Query,
-  Param,
-  UseGuards,
-  UseInterceptors,
-  UploadedFile,
-  ParseFilePipe,
-  MaxFileSizeValidator,
-  FileTypeValidator,
-  BadRequestException,
-  NotFoundException,
-  Res,
-  StreamableFile,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
-import { DocumentsService } from './documents.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { Role } from '@prisma/client';
-import { CreateDocumentDto } from './dto/create-document.dto';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { randomUUID } from 'crypto';
-import { existsSync, createReadStream, mkdirSync } from 'fs';
-import type { Response } from 'express';
+<file path="src/documents/dto/create-document.dto.ts">
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsArray, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { DocumentStatus } from '@prisma/client';
 
-// Автоматично створюємо директорію для файлів при старті модуля
-const uploadDir = join(process.cwd(), 'uploads', 'documents');
-if (!existsSync(uploadDir)) {
-  mkdirSync(uploadDir, { recursive: true });
-}
+export class CreateDocumentDto {
+  @ApiProperty({ description: 'Назва документа', example: 'Інструкція з пожежної безпеки' })
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
 
-@ApiTags('Documents')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('documents')
-export class DocumentsController {
-  constructor(private readonly documentsService: DocumentsService) {}
+  @ApiPropertyOptional({ description: 'Короткий опис документа', example: 'Правила та інструкції для підрозділів...' })
+  @IsString()
+  @IsOptional()
+  description?: string;
 
-  @ApiOperation({ summary: 'Завантажити документ (тільки PDF, до 10MB, ADMIN)' })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: 'Назва документа' },
-        departmentId: { type: 'string', format: 'uuid', description: 'ID підрозділу' },
-        file: { type: 'string', format: 'binary', description: 'PDF файл' },
-      },
-      required: ['title', 'departmentId', 'file'],
-    },
+  @ApiPropertyOptional({ description: 'Статус документа', enum: DocumentStatus, default: DocumentStatus.DRAFT })
+  @IsEnum(DocumentStatus)
+  @IsOptional()
+  status?: DocumentStatus;
+
+  @ApiPropertyOptional({ description: 'Масив ID підрозділів (якщо порожньо - доступний для всіх)', type: [String] })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        return Array.isArray(parsed) ? parsed : [value];
+      } catch {
+        return [value];
+      }
+    }
+    return value;
   })
-  @Roles(Role.ADMIN)
-  @Post()
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (req, file, cb) => {
-          const uniqueSuffix = randomUUID();
-          const ext = extname(file.originalname);
-          cb(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
-      fileFilter: (req, file, cb) => {
-        if (file.mimetype !== 'application/pdf') {
-          return cb(new BadRequestException('Only PDF files are allowed'), false);
-        }
-        cb(null, true);
-      },
-      limits: {
-        fileSize: 10 * 1024 * 1024, // 10 MB limit
-      },
-    }),
-  )
-  uploadDocument(
-    @Body() dto: CreateDocumentDto,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
-    if (!file) {
-      throw new BadRequestException('File is not uploaded');
-    }
-
-    const fileUrl = `/documents/download/${file.filename}`;
-    return this.documentsService.uploadDocument(dto.title, dto.departmentId, fileUrl);
-  }
-
-  @ApiOperation({ summary: 'Отримати список документів (з опціональною фільтрацією по підрозділу)' })
-  @Get()
-  findAll(@Query('departmentId') departmentId?: string) {
-    return this.documentsService.findAll(departmentId);
-  }
-
-  @ApiOperation({ summary: 'Отримати (завантажити) файл за його ім\'ям' })
-  @Get('download/:filename')
-  downloadFile(
-    @Param('filename') filename: string,
-    @Res({ passthrough: true }) res: Response,
-  ): StreamableFile {
-    const filePath = join(uploadDir, filename);
-    
-    if (!existsSync(filePath)) {
-      throw new NotFoundException('Файл не знайдено на сервері');
-    }
-
-    const fileStream = createReadStream(filePath);
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `inline; filename="${filename}"`,
-    });
-
-    return new StreamableFile(fileStream);
-  }
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  departmentIds?: string[];
 }
 </file>
 
@@ -1943,6 +1879,138 @@ import { PollsCronService } from './polls.cron';
   controllers: [PollsController]
 })
 export class PollsModule {}
+</file>
+
+<file path="src/projects/dto/create-project.dto.ts">
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsArray, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { ProjectStatus } from '@prisma/client';
+
+export class CreateProjectDto {
+  @ApiProperty({ description: 'Назва проєкту', example: 'Оновлення системи оповіщення' })
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @ApiProperty({ description: 'Опис проєкту', example: 'Пропоную замінити старі сирени на нові цифрові...' })
+  @IsString()
+  @IsNotEmpty()
+  description!: string;
+
+  @ApiPropertyOptional({ description: 'Статус проєкту', enum: ProjectStatus, default: ProjectStatus.DRAFT })
+  @IsEnum(ProjectStatus)
+  @IsOptional()
+  status?: ProjectStatus;
+
+  @ApiPropertyOptional({ description: 'Масив ID підрозділів (якщо порожньо - доступний для всіх)', type: [String] })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        return Array.isArray(parsed) ? parsed : [value];
+      } catch {
+        return [value];
+      }
+    }
+    return value;
+  })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  departmentIds?: string[];
+}
+</file>
+
+<file path="src/security/file-security.service.ts">
+import { Injectable, BadRequestException } from '@nestjs/common';
+import * as fs from 'fs/promises';
+
+@Injectable()
+export class FileSecurityService {
+  /**
+   * Reads the first 4 bytes of a file on disk to verify its binary signature.
+   * PDF files MUST start with hex: 25 50 44 46 (%PDF)
+   */
+  async validatePdfSignature(filePath: string): Promise<void> {
+    let filehandle;
+    try {
+      filehandle = await fs.open(filePath, 'r');
+      const buffer = Buffer.alloc(4);
+      await filehandle.read(buffer, 0, 4, 0);
+      
+      // %PDF -> 25 50 44 46
+      if (buffer[0] !== 0x25 || buffer[1] !== 0x50 || buffer[2] !== 0x44 || buffer[3] !== 0x46) {
+        throw new Error('Invalid binary signature');
+      }
+    } catch (error) {
+      // Wipe the potentially malicious file immediately
+      await fs.unlink(filePath).catch(() => {
+        console.error(`Failed to delete compromised file at: ${filePath}`);
+      });
+      throw new BadRequestException('Критична помилка: Файл не є справжнім PDF-документом (Виявлено підробку сигнатури).');
+    } finally {
+      if (filehandle) {
+        await filehandle.close();
+      }
+    }
+  }
+
+  /**
+   * Validates magic numbers for media files allowed in the News module:
+   * JPEG, PNG, MP4, WEBM, OGG.
+   */
+  async validateMediaSignature(filePath: string): Promise<void> {
+    let filehandle;
+    try {
+      filehandle = await fs.open(filePath, 'r');
+      const buffer = Buffer.alloc(8);
+      await filehandle.read(buffer, 0, 8, 0);
+
+      const hex = buffer.toString('hex').toUpperCase();
+      const str = buffer.toString('utf8');
+
+      // JPEG: FF D8 FF
+      const isJpeg = hex.startsWith('FFD8FF');
+      // PNG: 89 50 4E 47
+      const isPng = hex.startsWith('89504E47');
+      // MP4: 'ftyp' starting at byte offset 4
+      const isMp4 = str.substring(4, 8) === 'ftyp';
+      // WEBM / MKV: 1A 45 DF A3
+      const isWebm = hex.startsWith('1A45DFA3');
+      // OGG: 'OggS'
+      const isOgg = hex.startsWith('4F676753');
+
+      if (!isJpeg && !isPng && !isMp4 && !isWebm && !isOgg) {
+        throw new Error('Invalid media binary signature');
+      }
+    } catch (error) {
+      await fs.unlink(filePath).catch(() => {
+        console.error(`Failed to delete compromised media file at: ${filePath}`);
+      });
+      throw new BadRequestException('Критична помилка: Файл не є дозволеним медіаформатом (Виявлено підробку сигнатури).');
+    } finally {
+      if (filehandle) {
+        await filehandle.close();
+      }
+    }
+  }
+}
+</file>
+
+<file path="src/users/dto/reset-password.dto.ts">
+import { IsString, IsNotEmpty, Matches } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class ResetPasswordDto {
+  @ApiProperty({ description: 'Новий пароль для користувача', example: 'SuperSecret1!' })
+  @IsString()
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, {
+    message: 'Пароль має містити щонайменше 8 символів, одну велику літеру, одну малу літеру, одну цифру та один спеціальний символ (@$!%*?&)',
+  })
+  @IsNotEmpty()
+  newPassword!: string;
+}
 </file>
 
 <file path="src/users/users.module.ts">
@@ -2132,105 +2200,227 @@ export class UpdateMemberRoleDto {
 }
 </file>
 
-<file path="src/chat/chat.gateway.ts">
+<file path="src/documents/documents.controller.ts">
 import {
-  WebSocketGateway,
-  WebSocketServer,
-  SubscribeMessage,
-  OnGatewayConnection,
-  OnGatewayDisconnect,
-  ConnectedSocket,
-  MessageBody,
-} from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
-import { UseGuards } from '@nestjs/common';
-import { ChatService } from './chat.service';
-import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
-import { SendMessageDto, EditMessageDto, DeleteMessageDto, MarkAsReadDto } from './dto/chat-message.dto';
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Query,
+  Param,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  NotFoundException,
+  Res,
+  Req,
+  StreamableFile,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import { DocumentsService } from './documents.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '@prisma/client';
+import { CreateDocumentDto } from './dto/create-document.dto';
+import { UpdateDocumentDto } from './dto/update-document.dto';
+import { QueryDocumentDto } from './dto/query-document.dto';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { randomUUID } from 'crypto';
+import { existsSync, createReadStream, mkdirSync } from 'fs';
+import type { Request, Response } from 'express';
 
-@WebSocketGateway({
-  cors: { origin: '*' }, 
-  namespace: '/chat',
-})
-@UseGuards(WsJwtGuard)
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server!: Server;
+interface RequestWithUser extends Request {
+  user: { sub: string; email: string; role: Role };
+}
 
-  constructor(private readonly chatService: ChatService) {}
+const uploadDir = join(process.cwd(), 'uploads', 'documents');
+if (!existsSync(uploadDir)) {
+  mkdirSync(uploadDir, { recursive: true });
+}
 
-  handleConnection(client: Socket) {
-    console.log(`Client connected: ${client.id}`);
-  }
+@ApiTags('Documents')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('documents')
+export class DocumentsController {
+  constructor(private readonly documentsService: DocumentsService) {}
 
-  handleDisconnect(client: Socket) {
-    console.log(`Client disconnected: ${client.id}`);
-  }
-
-  @SubscribeMessage('joinRoom')
-  async handleJoinRoom(@ConnectedSocket() client: Socket, @MessageBody('groupId') groupId: string) {
-    const user = client.data.user; 
-    try {
-      await this.chatService.getGroupMessages(groupId, user);
-      client.join(groupId);
-      return { status: 'ok', event: 'joined', groupId };
-    } catch (error) {
-      return { status: 'error', message: 'Access denied' };
+  @ApiOperation({ summary: 'Завантажити та створити документ у форматі PDF (Тільки ADMIN)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Назва документа' },
+        description: { type: 'string', description: 'Опис документа' },
+        status: { type: 'string', enum: ['DRAFT', 'PUBLISHED', 'ARCHIVED'], description: 'Статус (за замовчуванням DRAFT)' },
+        departmentIds: { type: 'array', items: { type: 'string', format: 'uuid' }, description: 'Масив ID підрозділів' },
+        file: { type: 'string', format: 'binary', description: 'PDF файл' },
+      },
+      required: ['title', 'file'],
+    },
+  })
+  @Roles(Role.ADMIN)
+  @Post()
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: uploadDir,
+        filename: (req, file, cb) => {
+          const uniqueSuffix = randomUUID();
+          const ext = extname(file.originalname);
+          cb(null, `${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (file.mimetype !== 'application/pdf') {
+          return cb(new BadRequestException('Only PDF files are allowed'), false);
+        }
+        cb(null, true);
+      },
+      limits: {
+        fileSize: 20 * 1024 * 1024,
+      },
+    }),
+  )
+  uploadDocument(
+    @Req() req: RequestWithUser,
+    @Body() dto: CreateDocumentDto,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('PDF file is required');
     }
+
+    const fileUrl = `/documents/download/${file.filename}`;
+    return this.documentsService.create(req.user.sub, dto, fileUrl);
   }
 
-  @SubscribeMessage('sendMessage')
-  async handleSendMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: SendMessageDto) {
-    const user = client.data.user;
-    try {
-      const message = await this.chatService.saveMessage(dto.groupId, user, dto.content);
-      this.server.to(dto.groupId).emit('newMessage', message);
-      return { status: 'ok' };
-    } catch (error: any) {
-      return { status: 'error', message: error.message };
-    }
+  @ApiOperation({ summary: 'Отримати список документів з пагінацією та фільтрацією' })
+  @Get()
+  findAll(
+    @Req() req: RequestWithUser,
+    @Query() query: QueryDocumentDto,
+  ) {
+    return this.documentsService.findAll(req.user, query);
   }
 
-  @SubscribeMessage('editMessage')
-  async handleEditMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: EditMessageDto) {
-    const user = client.data.user;
-    try {
-      const updatedMessage = await this.chatService.editMessage(dto.messageId, user, dto.newContent);
-      this.server.to(updatedMessage.groupId).emit('messageUpdated', updatedMessage);
-      return { status: 'ok' };
-    } catch (error: any) {
-      return { status: 'error', message: error.message };
+  @ApiOperation({ summary: 'Завантажити/переглянути файл PDF за іменем файлу' })
+  @Get('download/:filename')
+  downloadFile(
+    @Param('filename') filename: string,
+    @Res({ passthrough: true }) res: Response,
+  ): StreamableFile {
+    if (filename.includes('..') || filename.includes('/')) {
+      throw new BadRequestException('Invalid filename');
     }
+
+    const filePath = join(uploadDir, filename);
+
+    if (!existsSync(filePath)) {
+      throw new NotFoundException('Файл не знайдено на сервері');
+    }
+
+    const fileStream = createReadStream(filePath);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${filename}"`,
+    });
+
+    return new StreamableFile(fileStream);
   }
 
-  @SubscribeMessage('deleteMessage')
-  async handleDeleteMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: DeleteMessageDto) {
-    const user = client.data.user;
-    try {
-      const deletedMessage = await this.chatService.deleteMessage(dto.messageId, user);
-      this.server.to(deletedMessage.groupId).emit('messageDeleted', deletedMessage);
-      return { status: 'ok' };
-    } catch (error: any) {
-      return { status: 'error', message: error.message };
-    }
+  @ApiOperation({ summary: 'Отримати деталі одного документа по ID' })
+  @Get(':id')
+  findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
+    return this.documentsService.findOne(id, req.user);
   }
 
-  @SubscribeMessage('markAsRead')
-  async handleMarkAsRead(@ConnectedSocket() client: Socket, @MessageBody() dto: MarkAsReadDto) {
-    const user = client.data.user;
-    try {
-      await this.chatService.markMessagesAsRead(dto.groupId, user.sub, dto.messageIds);
-      
-      this.server.to(dto.groupId).emit('messagesRead', {
-        groupId: dto.groupId,
-        messageIds: dto.messageIds,
-        readByUserId: user.sub,
-      });
-      
-      return { status: 'ok' };
-    } catch (error: any) {
-      return { status: 'error', message: error.message };
+  @ApiOperation({ summary: 'Редагувати документ (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateDocumentDto) {
+    return this.documentsService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Опублікувати документ (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/publish')
+  publish(@Param('id') id: string) {
+    return this.documentsService.publish(id);
+  }
+
+  @ApiOperation({ summary: 'Перемістити документ в архів (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/archive')
+  archive(@Param('id') id: string) {
+    return this.documentsService.archive(id);
+  }
+
+  @ApiOperation({ summary: 'Дістати документ з архіва -> надає статус DRAFT (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/unarchive')
+  unarchive(@Param('id') id: string) {
+    return this.documentsService.unarchive(id);
+  }
+
+  @ApiOperation({ summary: 'Видалити документ (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.documentsService.remove(id);
+  }
+
+  @ApiOperation({ summary: 'Замінити PDF файл документа (Тільки ADMIN)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary', description: 'Новий PDF файл' },
+      },
+      required: ['file'],
+    },
+  })
+  @Roles(Role.ADMIN)
+  @Patch(':id/file')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: uploadDir,
+        filename: (req, file, cb) => {
+          const uniqueSuffix = randomUUID();
+          const ext = extname(file.originalname);
+          cb(null, `${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (file.mimetype !== 'application/pdf') {
+          return cb(new BadRequestException('Only PDF files are allowed'), false);
+        }
+        cb(null, true);
+      },
+      limits: {
+        fileSize: 20 * 1024 * 1024,
+      },
+    }),
+  )
+  updateFile(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('PDF file is required');
     }
+
+    const fileUrl = `/documents/download/${file.filename}`;
+    return this.documentsService.updateFile(id, fileUrl);
   }
 }
 </file>
@@ -2293,6 +2483,623 @@ export class UpdatePollDto extends PartialType(CreatePollDto) {
 }
 </file>
 
+<file path="src/projects/projects.controller.ts">
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  Req,
+  Res,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
+  NotFoundException,
+  StreamableFile,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ProjectsService } from './projects.service';
+import { CreateProjectDto } from './dto/create-project.dto';
+import { UpdateProjectDto } from './dto/update-project.dto';
+import { QueryProjectDto } from './dto/query-project.dto';
+import { CreateProjectCommentDto } from './dto/create-project-comment.dto';
+import { VoteProjectDto } from './dto/vote-project.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
+import { Role } from '@prisma/client';
+import { diskStorage } from 'multer';
+import { extname, join } from 'path';
+import { randomUUID } from 'crypto';
+import { existsSync, createReadStream, mkdirSync } from 'fs';
+
+interface RequestWithUser extends Request {
+  user: { sub: string; email: string; role: Role };
+}
+
+const uploadDir = join(process.cwd(), 'uploads', 'projects');
+if (!existsSync(uploadDir)) {
+  mkdirSync(uploadDir, { recursive: true });
+}
+
+@ApiTags('Projects')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('projects')
+export class ProjectsController {
+  constructor(private readonly projectsService: ProjectsService) {}
+
+  @ApiOperation({ summary: 'Створити новий проєкт/ініціативу з PDF файлом (Тільки ADMIN)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Назва проєкту' },
+        description: { type: 'string', description: 'Опис проєкту' },
+        status: { type: 'string', enum: ['DRAFT', 'PUBLISHED', 'ARCHIVED'], description: 'Статус (за замовчуванням DRAFT)' },
+        departmentIds: { type: 'array', items: { type: 'string', format: 'uuid' }, description: 'Масив ID підрозділів' },
+        file: { type: 'string', format: 'binary', description: 'PDF файл проєкту' },
+      },
+      required: ['title', 'description', 'file'],
+    },
+  })
+  @Roles(Role.ADMIN)
+  @Post()
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: uploadDir,
+        filename: (req, file, cb) => {
+          const uniqueSuffix = randomUUID();
+          const ext = extname(file.originalname);
+          cb(null, `${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (file.mimetype !== 'application/pdf') {
+          return cb(new BadRequestException('Only PDF files are allowed'), false);
+        }
+        cb(null, true);
+      },
+      limits: {
+        fileSize: 20 * 1024 * 1024,
+      },
+    }),
+  )
+  create(
+    @Req() req: RequestWithUser,
+    @Body() dto: CreateProjectDto,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('PDF file is required');
+    }
+
+    const fileUrl = `/projects/download/${file.filename}`;
+    return this.projectsService.create(req.user.sub, dto, fileUrl);
+  }
+
+  @ApiOperation({ summary: 'Завантажити/переглянути PDF файл проєкту за іменем файлу' })
+  @Get('download/:filename')
+  downloadFile(
+    @Param('filename') filename: string,
+    @Res({ passthrough: true }) res: Response,
+  ): StreamableFile {
+    if (filename.includes('..') || filename.includes('/')) {
+      throw new BadRequestException('Invalid filename');
+    }
+
+    const filePath = join(uploadDir, filename);
+
+    if (!existsSync(filePath)) {
+      throw new NotFoundException('Файл не знайдено на сервері');
+    }
+
+    const fileStream = createReadStream(filePath);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${filename}"`,
+    });
+
+    return new StreamableFile(fileStream);
+  }
+
+  @ApiOperation({ summary: 'Отримати список проєктів з пагінацією та фільтрацією' })
+  @Get()
+  findAll(@Req() req: RequestWithUser, @Query() query: QueryProjectDto) {
+    return this.projectsService.findAll(req.user, query);
+  }
+
+  @ApiOperation({ summary: 'Отримати деталі проєкту разом з коментарями та голосами' })
+  @Get(':id')
+  findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
+    return this.projectsService.findOne(id, req.user);
+  }
+
+  @ApiOperation({ summary: 'Редагувати проєкт (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateProjectDto, @Req() req: RequestWithUser) {
+    return this.projectsService.update(id, dto, req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Опублікувати проєкт (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/publish')
+  publish(@Param('id') id: string) {
+    return this.projectsService.publish(id);
+  }
+
+  @ApiOperation({ summary: 'Перемістити проєкт в архів (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/archive')
+  archive(@Param('id') id: string) {
+    return this.projectsService.archive(id);
+  }
+
+  @ApiOperation({ summary: 'Дістати проєкт з архіву -> отримує статус DRAFT (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/unarchive')
+  unarchive(@Param('id') id: string) {
+    return this.projectsService.unarchive(id);
+  }
+
+  @ApiOperation({ summary: 'Видалити проєкт (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string, @Req() req: RequestWithUser) {
+    return this.projectsService.remove(id, req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Видалити коментар проєкту (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Delete(':projectId/comments/:commentId')
+  removeComment(
+    @Param('projectId') projectId: string,
+    @Param('commentId') commentId: string,
+    @Req() req: RequestWithUser,
+  ) {
+    return this.projectsService.removeComment(projectId, commentId, req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Додати коментар до проєкту' })
+  @Post(':id/comments')
+  addComment(
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+    @Body() dto: CreateProjectCommentDto,
+  ) {
+    return this.projectsService.addComment(id, req.user.sub, dto.content, req.user);
+  }
+
+  @ApiOperation({ summary: 'Проголосувати за проєкт (UPVOTE / DOWNVOTE)' })
+  @Post(':id/vote')
+  vote(
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+    @Body() dto: VoteProjectDto,
+  ) {
+    return this.projectsService.vote(id, req.user.sub, dto.voteType, req.user);
+  }
+
+  @ApiOperation({ summary: 'Замінити PDF файл проєкту (Тільки ADMIN)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary', description: 'Новий PDF файл' },
+      },
+      required: ['file'],
+    },
+  })
+  @Roles(Role.ADMIN)
+  @Patch(':id/file')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: uploadDir,
+        filename: (req, file, cb) => {
+          const uniqueSuffix = randomUUID();
+          const ext = extname(file.originalname);
+          cb(null, `${uniqueSuffix}${ext}`);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (file.mimetype !== 'application/pdf') {
+          return cb(new BadRequestException('Only PDF files are allowed'), false);
+        }
+        cb(null, true);
+      },
+      limits: {
+        fileSize: 20 * 1024 * 1024,
+      },
+    }),
+  )
+  updateFile(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('PDF file is required');
+    }
+
+    const fileUrl = `/projects/download/${file.filename}`;
+    return this.projectsService.updateFile(id, fileUrl);
+  }
+}
+</file>
+
+<file path="src/projects/projects.service.ts">
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { FileSecurityService } from '../security/file-security.service';
+import { CreateProjectDto } from './dto/create-project.dto';
+import { UpdateProjectDto } from './dto/update-project.dto';
+import { QueryProjectDto } from './dto/query-project.dto';
+import { VoteType, ProjectStatus, Role, Prisma } from '@prisma/client';
+import * as fs from 'fs/promises';
+import { join } from 'path';
+
+@Injectable()
+export class ProjectsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fileSecurityService: FileSecurityService,
+  ) {}
+
+  async create(authorId: string, dto: CreateProjectDto, fileUrl: string) {
+    const filename = fileUrl.split('/').pop() || '';
+    const filePath = join(process.cwd(), 'uploads', 'projects', filename);
+    
+    // Strict binary signature validation before saving to DB
+    await this.fileSecurityService.validatePdfSignature(filePath);
+
+    if (dto.departmentIds && dto.departmentIds.length > 0) {
+      const departments = await this.prisma.department.findMany({
+        where: { id: { in: dto.departmentIds } },
+      });
+
+      if (departments.length !== dto.departmentIds.length) {
+        throw new BadRequestException('One or more department IDs do not exist');
+      }
+    }
+
+    return this.prisma.project.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        fileUrl,
+        status: dto.status ?? ProjectStatus.DRAFT,
+        authorId,
+        departments: dto.departmentIds?.length
+          ? { connect: dto.departmentIds.map((id) => ({ id })) }
+          : undefined,
+      },
+      include: {
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        departments: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  async findAll(user: { sub: string; role: Role }, query: QueryProjectDto) {
+    const pageNumber = Math.max(1, Number(query.page) || 1);
+    const limitNumber = Math.max(1, Number(query.limit) || 10);
+    const skip = (pageNumber - 1) * limitNumber;
+
+    const where: Prisma.ProjectWhereInput = {};
+
+    if (user.role === Role.USER) {
+      where.status = ProjectStatus.PUBLISHED;
+    } else if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.departmentId) {
+      where.OR = [
+        { departments: { some: { id: query.departmentId } } },
+        { departments: { none: {} } },
+      ];
+    }
+
+    if (query.search) {
+      where.OR = [
+        { title: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [projects, total] = await Promise.all([
+      this.prisma.project.findMany({
+        where,
+        skip,
+        take: limitNumber,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          departments: { select: { id: true, name: true } },
+          votes: { select: { voteType: true, userId: true } },
+          _count: { select: { comments: true } },
+        },
+      }),
+      this.prisma.project.count({ where }),
+    ]);
+
+    const mappedData = projects.map((project) => {
+      const upvotes = project.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
+      const downvotes = project.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
+      const currentUserVote = project.votes.find((v) => v.userId === user.sub)?.voteType || null;
+
+      const { votes, ...rest } = project;
+
+      return {
+        ...rest,
+        upvotes,
+        downvotes,
+        currentUserVote,
+      };
+    });
+
+    return {
+      data: mappedData,
+      meta: {
+        total,
+        page: pageNumber,
+        lastPage: Math.ceil(total / limitNumber),
+        limit: limitNumber,
+      },
+    };
+  }
+
+  async findOne(id: string, user: { sub: string; role: Role }) {
+    const project = await this.prisma.project.findUnique({
+      where: { id },
+      include: {
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        departments: { select: { id: true, name: true } },
+        comments: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          },
+        },
+        votes: true,
+      },
+    });
+
+    if (!project) throw new NotFoundException('Project not found');
+
+    if (user.role === Role.USER && project.status !== ProjectStatus.PUBLISHED) {
+      throw new ForbiddenException('Access denied to unpublished or archived project');
+    }
+
+    const upvotes = project.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
+    const downvotes = project.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
+    const currentUserVote = project.votes.find((v) => v.userId === user.sub)?.voteType || null;
+
+    return { ...project, upvotes, downvotes, currentUserVote };
+  }
+
+  async update(id: string, dto: UpdateProjectDto, userId: string) {
+    const project = await this.prisma.project.findUnique({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    const { departmentIds, ...restData } = dto;
+
+    if (departmentIds && departmentIds.length > 0) {
+      const departments = await this.prisma.department.findMany({
+        where: { id: { in: departmentIds } },
+      });
+
+      if (departments.length !== departmentIds.length) {
+        throw new BadRequestException('One or more department IDs do not exist');
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'Project',
+          entityId: id,
+          action: 'UPDATE',
+          oldValues: project as unknown as Prisma.InputJsonValue,
+          newValues: dto as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+
+      return tx.project.update({
+        where: { id },
+        data: {
+          ...restData,
+          ...(departmentIds !== undefined && {
+            departments: {
+              set: departmentIds.map((deptId) => ({ id: deptId })),
+            },
+          }),
+        },
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+          departments: { select: { id: true, name: true } },
+        },
+      });
+    });
+  }
+
+  async publish(id: string) {
+    const project = await this.prisma.project.findUnique({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    return this.prisma.project.update({
+      where: { id },
+      data: { status: ProjectStatus.PUBLISHED },
+    });
+  }
+
+  async archive(id: string) {
+    const project = await this.prisma.project.findUnique({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    return this.prisma.project.update({
+      where: { id },
+      data: { status: ProjectStatus.ARCHIVED },
+    });
+  }
+
+  async unarchive(id: string) {
+    const project = await this.prisma.project.findUnique({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    if (project.status !== ProjectStatus.ARCHIVED) {
+      throw new BadRequestException('Project is not in archived status');
+    }
+
+    return this.prisma.project.update({
+      where: { id },
+      data: { status: ProjectStatus.DRAFT },
+    });
+  }
+
+  async remove(id: string, userId: string) {
+    const project = await this.prisma.project.findUnique({ where: { id } });
+    if (!project) throw new NotFoundException('Project not found');
+
+    const filename = project.fileUrl.split('/').pop();
+    if (filename) {
+      const filePath = join(process.cwd(), 'uploads', 'projects', filename);
+      try {
+        await fs.unlink(filePath);
+      } catch (error) {
+        // Ігноруємо помилку
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'Project',
+          entityId: id,
+          action: 'DELETE',
+          oldValues: project as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.project.delete({ where: { id } });
+    });
+
+    return { message: 'Project successfully deleted' };
+  }
+
+  async removeComment(projectId: string, commentId: string, userId: string) {
+    const comment = await this.prisma.projectComment.findFirst({
+      where: { id: commentId, projectId },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment not found or does not belong to this project');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'ProjectComment',
+          entityId: commentId,
+          action: 'DELETE',
+          oldValues: comment as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.projectComment.delete({
+        where: { id: commentId },
+      });
+    });
+
+    return { message: 'Comment successfully deleted' };
+  }
+
+  async updateFile(id: string, fileUrl: string) {
+    const newFilename = fileUrl.split('/').pop() || '';
+    const newFilePath = join(process.cwd(), 'uploads', 'projects', newFilename);
+    
+    // Strict binary signature validation for the newly updated file
+    await this.fileSecurityService.validatePdfSignature(newFilePath);
+
+    const project = await this.prisma.project.findUnique({ where: { id } });
+    if (!project) {
+      await fs.unlink(newFilePath).catch(() => {});
+      throw new NotFoundException('Project not found');
+    }
+
+    // Видаляємо старий файл з диска перед збереженням нового
+    const oldFilename = project.fileUrl.split('/').pop();
+    if (oldFilename) {
+      const oldFilePath = join(process.cwd(), 'uploads', 'projects', oldFilename);
+      try {
+        await fs.unlink(oldFilePath);
+      } catch (error) {
+        // Ігноруємо помилку, якщо старий файл відсутній
+      }
+    }
+
+    return this.prisma.project.update({
+      where: { id },
+      data: { fileUrl },
+      include: {
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        departments: { select: { id: true, name: true } },
+      },
+    });
+  }
+
+  async addComment(projectId: string, authorId: string, content: string, user: { sub: string; role: Role }) {
+    await this.findOne(projectId, user);
+    return this.prisma.projectComment.create({
+      data: { content, authorId, projectId },
+      include: {
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
+  }
+
+  async vote(projectId: string, userId: string, voteType: VoteType, user: { sub: string; role: Role }) {
+    await this.findOne(projectId, user);
+
+    const existingVote = await this.prisma.projectVote.findUnique({
+      where: { userId_projectId: { userId, projectId } },
+    });
+
+    if (existingVote) {
+      if (existingVote.voteType === voteType) {
+        await this.prisma.projectVote.delete({
+          where: { userId_projectId: { userId, projectId } },
+        });
+        return { message: 'Голос видалено' };
+      } else {
+        await this.prisma.projectVote.update({
+          where: { userId_projectId: { userId, projectId } },
+          data: { voteType },
+        });
+        return { message: 'Голос змінено' };
+      }
+    }
+
+    await this.prisma.projectVote.create({
+      data: { projectId, userId, voteType },
+    });
+    return { message: 'Голос зараховано' };
+  }
+}
+</file>
+
 <file path="src/app.controller.ts">
 import { Controller, Get, Param, Res, UseGuards, NotFoundException, BadRequestException } from '@nestjs/common';
 import type { Response } from 'express';
@@ -2351,135 +3158,52 @@ export class AppController {
 }
 </file>
 
-<file path="src/main.ts">
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ValidationPipe } from '@nestjs/common';
+<file path="src/auth/dto/auth.dto.ts">
+import { IsEmail, IsNotEmpty, IsString, MinLength, Matches } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+export class RegisterDto {
+  @ApiProperty({ example: 'admin@dsns.gov.ua', description: 'Службова пошта' })
+  @IsEmail({}, { message: 'Некоректний формат email' })
+  @IsNotEmpty({ message: 'Email не може бути порожнім' })
+  email!: string;
 
-// Налаштування CORS для підключення React адмін-панелі
-  app.enableCors({
-    origin: 'http://localhost:5173',
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true,
-  });
+  @ApiProperty({ example: 'SuperSecret1!', description: 'Пароль (мінімум 8 символів, велика та мала літера, цифра, спецсимвол)' })
+  @IsString()
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, {
+    message: 'Пароль має містити щонайменше 8 символів, одну велику літеру, одну малу літеру, одну цифру та один спеціальний символ (@$!%*?&)',
+  })
+  @IsNotEmpty()
+  password!: string;
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-    }),
-  );
+  @ApiProperty({ example: 'Іван' })
+  @IsString()
+  @IsNotEmpty({ message: 'Ім\'я не може бути порожнім' })
+  firstName!: string;
 
-  // Налаштування Swagger для тестування API
-  const config = new DocumentBuilder()
-    .setTitle('DSNS Hub API')
-    .setDescription('Тестування відомчої системи ДСНС')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
-
-  await app.listen(3000);
+  @ApiProperty({ example: 'Іванов' })
+  @IsString()
+  @IsNotEmpty({ message: 'Прізвище не може бути порожнім' })
+  lastName!: string;
 }
-bootstrap();
-</file>
 
-<file path="src/auth/auth.service.ts">
-import {
-  Injectable,
-  ForbiddenException,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { JwtService } from '@nestjs/jwt';
-import { RegisterDto, LoginDto } from './dto/auth.dto';
-import * as bcrypt from 'bcrypt';
+export class LoginDto {
+  @ApiProperty({ example: 'admin@dsns.gov.ua' })
+  @IsEmail({}, { message: 'Некоректний формат email' })
+  @IsNotEmpty()
+  email!: string;
 
-@Injectable()
-export class AuthService {
-  constructor(
-    private prisma: PrismaService,
-    private jwtService: JwtService,
-  ) {}
+  @ApiProperty({ example: 'SuperSecretPassword123' })
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+}
 
-  async register(dto: RegisterDto) {
-    // 1. Критична перевірка email-адреси
-    if (!dto.email.endsWith('@dsns.gov.ua')) {
-      throw new ForbiddenException(
-        'Реєстрація дозволена лише для співробітників з доменом @dsns.gov.ua',
-      );
-    }
-
-    // 2. Перевірка, чи не існує вже такого користувача
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-    
-    if (existingUser) {
-      throw new ForbiddenException('Користувач з таким email вже існує');
-    }
-
-    // 3. Хешування пароля за допомогою bcrypt
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
-
-    // 4. Збереження в базу даних
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash: hashedPassword,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-      },
-    });
-
-    return {
-      message: 'Користувача успішно зареєстровано',
-      userId: user.id,
-    };
-  }
-
-  async login(dto: LoginDto) {
-    // 1. Шукаємо користувача
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Невірний email або пароль');
-    }
-
-    if (!user.isActive) {
-      throw new ForbiddenException('Ваш обліковий запис заблоковано');
-    }
-
-    // 2. Перевіряємо хеш пароля
-    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
-    
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Невірний email або пароль');
-    }
-
-    // 3. Генеруємо JWT токен
-    const payload = { sub: user.id, email: user.email, role: user.role };
-    
-    return {
-      accessToken: await this.jwtService.signAsync(payload),
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        avatarUrl: user.avatarUrl,
-      },
-    };
-  }
+export class RefreshTokenDto {
+  @ApiProperty({ description: 'Refresh Token' })
+  @IsString()
+  @IsNotEmpty()
+  refreshToken!: string;
 }
 </file>
 
@@ -2630,6 +3354,110 @@ export class ChatController {
     @Query('take', new DefaultValuePipe(50), ParseIntPipe) take: number,
   ) {
     return this.chatService.getAuditLogs(skip, take);
+  }
+}
+</file>
+
+<file path="src/chat/chat.gateway.ts">
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  ConnectedSocket,
+  MessageBody,
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { UseGuards } from '@nestjs/common';
+import { ChatService } from './chat.service';
+import { WsJwtGuard } from '../auth/guards/ws-jwt.guard';
+import { WsThrottlerGuard } from '../common/guards/ws-throttler.guard';
+import { SendMessageDto, EditMessageDto, DeleteMessageDto, MarkAsReadDto } from './dto/chat-message.dto';
+
+@WebSocketGateway({
+  cors: { origin: '*' }, 
+  namespace: '/chat',
+})
+@UseGuards(WsJwtGuard, WsThrottlerGuard)
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer()
+  server!: Server;
+
+  constructor(private readonly chatService: ChatService) {}
+
+  handleConnection(client: Socket) {
+    console.log(`Client connected: ${client.id}`);
+  }
+
+  handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+  }
+
+  @SubscribeMessage('joinRoom')
+  async handleJoinRoom(@ConnectedSocket() client: Socket, @MessageBody('groupId') groupId: string) {
+    const user = client.data.user; 
+    try {
+      await this.chatService.getGroupMessages(groupId, user);
+      client.join(groupId);
+      return { status: 'ok', event: 'joined', groupId };
+    } catch (error) {
+      return { status: 'error', message: 'Access denied' };
+    }
+  }
+
+  @SubscribeMessage('sendMessage')
+  async handleSendMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: SendMessageDto) {
+    const user = client.data.user;
+    try {
+      const message = await this.chatService.saveMessage(dto.groupId, user, dto.content);
+      this.server.to(dto.groupId).emit('newMessage', message);
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('editMessage')
+  async handleEditMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: EditMessageDto) {
+    const user = client.data.user;
+    try {
+      const updatedMessage = await this.chatService.editMessage(dto.messageId, user, dto.newContent);
+      this.server.to(updatedMessage.groupId).emit('messageUpdated', updatedMessage);
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('deleteMessage')
+  async handleDeleteMessage(@ConnectedSocket() client: Socket, @MessageBody() dto: DeleteMessageDto) {
+    const user = client.data.user;
+    try {
+      const deletedMessage = await this.chatService.deleteMessage(dto.messageId, user);
+      this.server.to(deletedMessage.groupId).emit('messageDeleted', deletedMessage);
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
+  }
+
+  @SubscribeMessage('markAsRead')
+  async handleMarkAsRead(@ConnectedSocket() client: Socket, @MessageBody() dto: MarkAsReadDto) {
+    const user = client.data.user;
+    try {
+      await this.chatService.markMessagesAsRead(dto.groupId, user.sub, dto.messageIds);
+      
+      this.server.to(dto.groupId).emit('messagesRead', {
+        groupId: dto.groupId,
+        messageIds: dto.messageIds,
+        readByUserId: user.sub,
+      });
+      
+      return { status: 'ok' };
+    } catch (error: any) {
+      return { status: 'error', message: error.message };
+    }
   }
 }
 </file>
@@ -2992,42 +3820,261 @@ export class ChatService {
 }
 </file>
 
-<file path="src/news/dto/create-news.dto.ts">
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, IsArray } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { NewsStatus } from '@prisma/client';
+<file path="src/documents/documents.service.ts">
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { FileSecurityService } from '../security/file-security.service';
+import { CreateDocumentDto } from './dto/create-document.dto';
+import { UpdateDocumentDto } from './dto/update-document.dto';
+import { QueryDocumentDto } from './dto/query-document.dto';
+import { DocumentStatus, Role, Prisma } from '@prisma/client';
+import * as fs from 'fs/promises';
+import { join } from 'path';
 
-export class CreateNewsDto {
-  @ApiProperty({ description: 'Назва новини', example: 'Термінове оголошення ГУ' })
-  @IsString()
-  @IsNotEmpty()
-  title!: string;
+@Injectable()
+export class DocumentsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fileSecurityService: FileSecurityService,
+  ) {}
 
-  @ApiProperty({ description: 'HTML-строка контенту новини', example: '<p>Текст новини...</p>' })
-  @IsString()
-  @IsNotEmpty()
-  content!: string;
+  async create(authorId: string, dto: CreateDocumentDto, fileUrl: string) {
+    const filename = fileUrl.split('/').pop() || '';
+    const filePath = join(process.cwd(), 'uploads', 'documents', filename);
+    
+    // Strict binary signature validation before saving to DB
+    await this.fileSecurityService.validatePdfSignature(filePath);
 
-  @ApiPropertyOptional({ description: 'URL головного зображення', example: '/news/media/file.jpg' })
-  @IsString()
-  @IsOptional()
-  imageUrl?: string;
+    if (dto.departmentIds && dto.departmentIds.length > 0) {
+      const departments = await this.prisma.department.findMany({
+        where: { id: { in: dto.departmentIds } },
+      });
 
-  @ApiPropertyOptional({ enum: NewsStatus, default: NewsStatus.PUBLISHED })
-  @IsEnum(NewsStatus)
-  @IsOptional()
-  status?: NewsStatus;
+      if (departments.length !== dto.departmentIds.length) {
+        throw new BadRequestException('One or more department IDs do not exist');
+      }
+    }
 
-  @ApiPropertyOptional({ description: 'ID категорії', format: 'uuid' })
-  @IsUUID('4')
-  @IsOptional()
-  categoryId?: string;
+    return this.prisma.document.create({
+      data: {
+        title: dto.title,
+        description: dto.description,
+        fileUrl,
+        status: dto.status ?? DocumentStatus.DRAFT,
+        authorId,
+        departments: dto.departmentIds?.length
+          ? { connect: dto.departmentIds.map((id) => ({ id })) }
+          : undefined,
+      },
+      include: {
+        departments: { select: { id: true, name: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
+  }
 
-  @ApiPropertyOptional({ description: 'Масив ID підрозділів', type: [String] })
-  @IsArray()
-  @IsUUID('4', { each: true })
-  @IsOptional()
-  departmentIds?: string[];
+  async findAll(user: { sub: string; role: Role }, query: QueryDocumentDto) {
+    const pageNumber = Math.max(1, Number(query.page) || 1);
+    const limitNumber = Math.max(1, Number(query.limit) || 10);
+    const skip = (pageNumber - 1) * limitNumber;
+
+    const where: Prisma.DocumentWhereInput = {};
+
+    if (user.role === Role.USER) {
+      where.status = DocumentStatus.PUBLISHED;
+    } else if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.departmentId) {
+      where.OR = [
+        { departments: { some: { id: query.departmentId } } },
+        { departments: { none: {} } },
+      ];
+    }
+
+    if (query.search) {
+      where.OR = [
+        { title: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [documents, total] = await Promise.all([
+      this.prisma.document.findMany({
+        where,
+        skip,
+        take: limitNumber,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          departments: { select: { id: true, name: true } },
+          author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+        },
+      }),
+      this.prisma.document.count({ where }),
+    ]);
+
+    return {
+      data: documents,
+      meta: {
+        total,
+        page: pageNumber,
+        lastPage: Math.ceil(total / limitNumber),
+        limit: limitNumber,
+      },
+    };
+  }
+
+  async findOne(id: string, user: { sub: string; role: Role }) {
+    const document = await this.prisma.document.findUnique({
+      where: { id },
+      include: {
+        departments: { select: { id: true, name: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
+
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    if (user.role === Role.USER && document.status !== DocumentStatus.PUBLISHED) {
+      throw new ForbiddenException('Access denied to unpublished or archived document');
+    }
+
+    return document;
+  }
+
+  async update(id: string, dto: UpdateDocumentDto) {
+    const document = await this.prisma.document.findUnique({ where: { id } });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    const { departmentIds, ...restData } = dto;
+
+    if (departmentIds && departmentIds.length > 0) {
+      const departments = await this.prisma.department.findMany({
+        where: { id: { in: departmentIds } },
+      });
+
+      if (departments.length !== departmentIds.length) {
+        throw new BadRequestException('One or more department IDs do not exist');
+      }
+    }
+
+    return this.prisma.document.update({
+      where: { id },
+      data: {
+        ...restData,
+        ...(departmentIds !== undefined && {
+          departments: {
+            set: departmentIds.map((deptId) => ({ id: deptId })),
+          },
+        }),
+      },
+      include: {
+        departments: { select: { id: true, name: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
+  }
+
+  async publish(id: string) {
+    const document = await this.prisma.document.findUnique({ where: { id } });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    return this.prisma.document.update({
+      where: { id },
+      data: { status: DocumentStatus.PUBLISHED },
+    });
+  }
+
+  async archive(id: string) {
+    const document = await this.prisma.document.findUnique({ where: { id } });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    return this.prisma.document.update({
+      where: { id },
+      data: { status: DocumentStatus.ARCHIVED },
+    });
+  }
+
+  async unarchive(id: string) {
+    const document = await this.prisma.document.findUnique({ where: { id } });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    if (document.status !== DocumentStatus.ARCHIVED) {
+      throw new BadRequestException('Document is not in archived status');
+    }
+
+    return this.prisma.document.update({
+      where: { id },
+      data: { status: DocumentStatus.DRAFT },
+    });
+  }
+
+  async remove(id: string) {
+    const document = await this.prisma.document.findUnique({ where: { id } });
+    if (!document) {
+      throw new NotFoundException('Document not found');
+    }
+
+    // Видаляємо файл з диска
+    const filename = document.fileUrl.split('/').pop();
+    if (filename) {
+      const filePath = join(process.cwd(), 'uploads', 'documents', filename);
+      try {
+        await fs.unlink(filePath);
+      } catch (error) {
+        // Ігноруємо помилку, якщо файл вже відсутній на диску
+      }
+    }
+
+    await this.prisma.document.delete({ where: { id } });
+    return { message: 'Document successfully deleted' };
+  }
+
+  async updateFile(id: string, fileUrl: string) {
+    const newFilename = fileUrl.split('/').pop() || '';
+    const newFilePath = join(process.cwd(), 'uploads', 'documents', newFilename);
+    
+    // Strict binary signature validation for the newly updated file
+    await this.fileSecurityService.validatePdfSignature(newFilePath);
+
+    const document = await this.prisma.document.findUnique({ where: { id } });
+    if (!document) {
+      // If DB document doesn't exist, clean up the newly uploaded file
+      await fs.unlink(newFilePath).catch(() => {});
+      throw new NotFoundException('Document not found');
+    }
+
+    // Видаляємо старий файл з диска перед збереженням нового
+    const oldFilename = document.fileUrl.split('/').pop();
+    if (oldFilename) {
+      const oldFilePath = join(process.cwd(), 'uploads', 'documents', oldFilename);
+      try {
+        await fs.unlink(oldFilePath);
+      } catch (error) {
+        // Ігноруємо, якщо старий файл не знайдено
+      }
+    }
+
+    return this.prisma.document.update({
+      where: { id },
+      data: { fileUrl },
+      include: {
+        departments: { select: { id: true, name: true } },
+        author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
+      },
+    });
+  }
 }
 </file>
 
@@ -3268,6 +4315,100 @@ export class UsersService {
 }
 </file>
 
+<file path="src/main.ts">
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Security Headers
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }, // Allows serving local static files securely
+  }));
+
+  // Налаштування CORS для підключення React адмін-панелі
+  app.enableCors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+  });
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true, // Rejects payload with properties not described in DTOs
+    }),
+  );
+
+  // Налаштування Swagger для тестування API
+  const config = new DocumentBuilder()
+    .setTitle('DSNS Hub API')
+    .setDescription('Тестування відомчої системи ДСНС')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, document);
+
+  await app.listen(3000);
+}
+bootstrap();
+</file>
+
+<file path="src/news/dto/create-news.dto.ts">
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, IsArray } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
+import { NewsStatus } from '@prisma/client';
+import sanitizeHtml from 'sanitize-html';
+
+export class CreateNewsDto {
+  @ApiProperty({ description: 'Назва новини', example: 'Термінове оголошення ГУ' })
+  @IsString()
+  @IsNotEmpty()
+  title!: string;
+
+  @ApiProperty({ description: 'HTML-строка контенту новини (автоматично санітизується)', example: '<p>Текст новини...</p>' })
+  @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => typeof value === 'string' ? sanitizeHtml(value, {
+    allowedTags: sanitizeHtml.defaults.allowedTags.concat(['img', 'h1', 'h2', 'h3', 'span', 'u', 's']),
+    allowedAttributes: {
+      '*': ['style', 'class'],
+      'a': ['href', 'name', 'target'],
+      'img': ['src', 'alt']
+    }
+  }) : value)
+  content!: string;
+
+  @ApiPropertyOptional({ description: 'URL головного зображення', example: '/news/media/file.jpg' })
+  @IsString()
+  @IsOptional()
+  imageUrl?: string;
+
+  @ApiPropertyOptional({ enum: NewsStatus, default: NewsStatus.PUBLISHED })
+  @IsEnum(NewsStatus)
+  @IsOptional()
+  status?: NewsStatus;
+
+  @ApiPropertyOptional({ description: 'ID категорії', format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  categoryId?: string;
+
+  @ApiPropertyOptional({ description: 'Масив ID підрозділів', type: [String] })
+  @IsArray()
+  @IsUUID('4', { each: true })
+  @IsOptional()
+  departmentIds?: string[];
+}
+</file>
+
 <file path="src/polls/polls.controller.ts">
 import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, Patch, Delete } from '@nestjs/common';
 import { PollsService } from './polls.service';
@@ -3341,6 +4482,174 @@ export class PollsController {
     @Body() dto: VotePollDto,
   ) {
     return this.pollsService.vote(id, req.user.sub, dto.optionId);
+  }
+}
+</file>
+
+<file path="src/auth/auth.service.ts">
+import {
+  Injectable,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { JwtService } from '@nestjs/jwt';
+import { RegisterDto, LoginDto } from './dto/auth.dto';
+import * as bcrypt from 'bcrypt';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+  ) {}
+
+  async register(dto: RegisterDto) {
+    // 1. Критична перевірка email-адреси
+    if (!dto.email.endsWith('@dsns.gov.ua')) {
+      throw new ForbiddenException(
+        'Реєстрація дозволена лише для співробітників з доменом @dsns.gov.ua',
+      );
+    }
+
+    // 2. Перевірка, чи не існує вже такого користувача
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    
+    if (existingUser) {
+      throw new ForbiddenException('Користувач з таким email вже існує');
+    }
+
+    // 3. Хешування пароля за допомогою bcrypt
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
+
+    // 4. Збереження в базу даних
+    const user = await this.prisma.user.create({
+      data: {
+        email: dto.email,
+        passwordHash: hashedPassword,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+      },
+    });
+
+    return {
+      message: 'Користувача успішно зареєстровано',
+      userId: user.id,
+    };
+  }
+
+  async login(dto: LoginDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Невірний email або пароль');
+    }
+
+    if (!user.isActive) {
+      throw new ForbiddenException('Ваш обліковий запис заблоковано. Зверніться до адміністратора.');
+    }
+
+    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
+    
+    if (!isPasswordValid) {
+      const newAttemptsCount = user.failedLoginAttempts + 1;
+      
+      if (newAttemptsCount >= 5) {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { isActive: false, failedLoginAttempts: newAttemptsCount },
+        });
+        throw new ForbiddenException('Занадто багато невдалих спроб. Ваш обліковий запис заблоковано.');
+      } else {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { failedLoginAttempts: newAttemptsCount },
+        });
+        throw new UnauthorizedException('Невірний email або пароль');
+      }
+    }
+
+    // Reset failed attempts on successful login
+    if (user.failedLoginAttempts > 0) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: 0 },
+      });
+    }
+
+    const tokens = await this.getTokens(user.id, user.email, user.role);
+    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+    
+    return {
+      ...tokens,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        avatarUrl: user.avatarUrl,
+      },
+    };
+  }
+
+  async logout(userId: string) {
+    await this.prisma.user.updateMany({
+      where: { id: userId, refreshToken: { not: null } },
+      data: { refreshToken: null },
+    });
+    return { message: 'Успішний вихід із системи' };
+  }
+
+  async refreshTokens(userId: string, refreshToken: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user || !user.refreshToken || !user.isActive) {
+      throw new ForbiddenException('Доступ заборонено');
+    }
+
+    const refreshTokenMatches = await bcrypt.compare(refreshToken, user.refreshToken);
+    if (!refreshTokenMatches) {
+      throw new ForbiddenException('Доступ заборонено');
+    }
+
+    const tokens = await this.getTokens(user.id, user.email, user.role);
+    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+
+    return tokens;
+  }
+
+  private async getTokens(userId: string, email: string, role: string) {
+    const jwtPayload = { sub: userId, email, role };
+
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwtService.signAsync(jwtPayload, {
+        secret: 'super-secret-key', // TODO: Move to .env
+        expiresIn: '15m',
+      }),
+      this.jwtService.signAsync(jwtPayload, {
+        secret: 'super-secret-refresh-key', // TODO: Move to .env
+        expiresIn: '7d',
+      }),
+    ]);
+
+    return { accessToken, refreshToken };
+  }
+
+  private async updateRefreshTokenHash(userId: string, refreshToken: string) {
+    const saltRounds = 10;
+    const hash = await bcrypt.hash(refreshToken, saltRounds);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { refreshToken: hash },
+    });
   }
 }
 </file>
@@ -3750,13 +5059,16 @@ export class PollsService {
     "@nestjs/schedule": "^6.1.3",
     "@nestjs/serve-static": "^5.0.5",
     "@nestjs/swagger": "^11.4.4",
+    "@nestjs/throttler": "^6.5.0",
     "@nestjs/websockets": "^11.1.27",
     "@prisma/client": "^6.19.3",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "helmet": "^8.3.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sanitize-html": "^2.17.7",
     "socket.io": "^4.8.3",
     "uuid": "^14.0.1"
   },
@@ -3772,6 +5084,7 @@ export class PollsService {
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.1.0",
     "@types/node": "^24.0.0",
+    "@types/sanitize-html": "^2.16.1",
     "@types/supertest": "^7.0.0",
     "@types/uuid": "^10.0.0",
     "eslint": "^9.18.0",
@@ -3846,12 +5159,17 @@ interface RequestWithUser extends Request {
   user: { sub: string; email: string; role: Role };
 }
 
+import { FileSecurityService } from '../security/file-security.service';
+
 @ApiTags('News')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('news')
 export class NewsController {
-  constructor(private readonly newsService: NewsService) {}
+  constructor(
+    private readonly newsService: NewsService,
+    private readonly fileSecurityService: FileSecurityService,
+  ) {}
 
   @ApiOperation({ summary: 'Створити статтю новин (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
@@ -3890,8 +5208,12 @@ export class NewsController {
       limits: { fileSize: 100 * 1024 * 1024 },
     }),
   )
-  uploadMedia(@UploadedFile() file: Express.Multer.File) {
+  async uploadMedia(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('Файл не завантажено');
+    
+    const filePath = join(newsUploadDir, file.filename);
+    await this.fileSecurityService.validateMediaSignature(filePath);
+    
     return { url: `/news/media/${file.filename}` };
   }
 
@@ -4013,15 +5335,15 @@ export class NewsController {
   @ApiOperation({ summary: 'Редагувати новину (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateNewsDto) {
-    return this.newsService.update(id, dto);
+  update(@Param('id') id: string, @Body() dto: UpdateNewsDto, @Req() req: RequestWithUser) {
+    return this.newsService.update(id, dto, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Видалити новину (Тільки ADMIN)' })
   @Roles(Role.ADMIN)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.newsService.remove(id);
+  remove(@Param('id') id: string, @Req() req: RequestWithUser) {
+    return this.newsService.remove(id, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Додати коментар до новини' })
@@ -4046,8 +5368,9 @@ export class NewsController {
   removeComment(
     @Param('newsId') newsId: string,
     @Param('commentId') commentId: string,
+    @Req() req: RequestWithUser,
   ) {
-    return this.newsService.removeComment(newsId, commentId);
+    return this.newsService.removeComment(newsId, commentId, req.user.sub);
   }
 
   @ApiOperation({ summary: 'Проголосувати за новину (Лайк / Дизлайк)' })
@@ -4066,9 +5389,11 @@ export class NewsController {
 <file path="src/app.module.ts">
 import { Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { NewsModule } from './news/news.module';
@@ -4079,10 +5404,17 @@ import { PollsModule } from './polls/polls.module';
 import { ChatModule } from './chat/chat.module';
 import { UsersModule } from './users/users.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { SecurityModule } from './security/security.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    SecurityModule,
+    // Global rate limit: max 100 requests per 1 minute per IP
+    ThrottlerModule.forRoot([{
+      ttl: 60000,
+      limit: 100,
+    }]),
     PrismaModule,
     AuthModule,
     NewsModule, 
@@ -4091,7 +5423,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     ProjectsModule, 
     PollsModule, 
     ChatModule, 
-    UsersModule
+    UsersModule, SecurityModule
   ],
   controllers: [AppController],
   providers: [
@@ -4099,6 +5431,14 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     {
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
     },
   ],
 })
@@ -4254,29 +5594,53 @@ export class NewsService {
     return { ...news, upvotes, downvotes, _count: { comments: commentsCount } };
   }
 
-  async update(id: string, dto: UpdateNewsDto) {
-    await this.findOne(id); // Validation check
+  async update(id: string, dto: UpdateNewsDto, userId: string) {
+    const oldNews = await this.findOne(id); // Validation check and old data retrieval
 
-    // Extract departmentIds to prevent passing it directly to Prisma
     const { departmentIds, ...restData } = dto;
 
-    return this.prisma.news.update({
-      where: { id },
-      data: {
-        ...restData,
-        // If departmentIds is provided (even an empty array []), replace the relations
-        ...(departmentIds !== undefined && {
-          departments: {
-            set: departmentIds.map((deptId) => ({ id: deptId })),
-          },
-        }),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'News',
+          entityId: id,
+          action: 'UPDATE',
+          oldValues: oldNews as unknown as Prisma.InputJsonValue,
+          newValues: dto as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+
+      return tx.news.update({
+        where: { id },
+        data: {
+          ...restData,
+          ...(departmentIds !== undefined && {
+            departments: {
+              set: departmentIds.map((deptId) => ({ id: deptId })),
+            },
+          }),
+        },
+      });
     });
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
-    await this.prisma.news.delete({ where: { id } });
+  async remove(id: string, userId: string) {
+    const oldNews = await this.findOne(id);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'News',
+          entityId: id,
+          action: 'DELETE',
+          oldValues: oldNews as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.news.delete({ where: { id } });
+    });
+
     return { message: 'Новину успішно видалено' };
   }
 
@@ -4353,7 +5717,7 @@ export class NewsService {
     });
   }
 
-  async removeComment(newsId: string, commentId: string) {
+  async removeComment(newsId: string, commentId: string, userId: string) {
     const comment = await this.prisma.newsComment.findFirst({
       where: { id: commentId, newsId },
     });
@@ -4362,8 +5726,19 @@ export class NewsService {
       throw new NotFoundException('Comment not found or does not belong to this news');
     }
 
-    await this.prisma.newsComment.delete({
-      where: { id: commentId },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.systemAuditLog.create({
+        data: {
+          entityName: 'NewsComment',
+          entityId: commentId,
+          action: 'DELETE',
+          oldValues: comment as unknown as Prisma.InputJsonValue,
+          userId,
+        },
+      });
+      await tx.newsComment.delete({
+        where: { id: commentId },
+      });
     });
 
     return { message: 'Comment successfully deleted' };
@@ -4436,6 +5811,18 @@ enum PollStatus {
   ARCHIVED
 }
 
+enum DocumentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ProjectStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
 model NewsCategory {
   id         String @id @default(uuid())
   name       String @unique
@@ -4444,29 +5831,59 @@ model NewsCategory {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  firstName    String
-  lastName     String
-  role         Role     @default(USER)
-  avatarUrl    String?
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  id                  String   @id @default(uuid())
+  email               String   @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  role                Role     @default(USER)
+  avatarUrl           String?
+  isActive            Boolean  @default(true)
+  failedLoginAttempts Int      @default(0)
+  refreshToken        String?  @db.Text
+  createdAt           DateTime @default(now())
 
   // Зв'язки
-  news         News[]
-  newsComments NewsComment[]
-  newsVotes    NewsVote[]
-  projects     Project[]
-  projectComms ProjectComment[]
-  projectVotes ProjectVote[]
-  messages     ChatMessage[]
-  auditLogs    MessagesAuditLog[]
-  polls        Poll[]
-  pollVotes    PollVote[]
-  chatGroups   GroupMember[]
-  readMessages MessageReadReceipt[]
+  news            News[]
+  newsComments    NewsComment[]
+  newsVotes       NewsVote[]
+  projects        Project[]
+  projectComms    ProjectComment[]
+  projectVotes    ProjectVote[]
+  messages        ChatMessage[]
+  auditLogs       MessagesAuditLog[]
+  polls           Poll[]
+  pollVotes       PollVote[]
+  chatGroups      GroupMember[]
+  readMessages    MessageReadReceipt[]
+  documents       Document[]
+  systemAuditLogs SystemAuditLog[]
+  apiAuditLogs    ApiAuditLog[]
+}
+
+model SystemAuditLog {
+  id          String   @id @default(uuid())
+  entityName  String
+  entityId    String
+  action      String   // CREATE, UPDATE, DELETE
+  oldValues   Json?
+  newValues   Json?
+  createdAt   DateTime @default(now())
+
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model ApiAuditLog {
+  id          String   @id @default(uuid())
+  method      String
+  url         String
+  payload     Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 model Department {
@@ -4476,6 +5893,7 @@ model Department {
   polls      Poll[]
   chatGroups ChatGroup[]
   news       News[]
+  projects   Project[]
 }
 
 model News {
@@ -4519,26 +5937,35 @@ model NewsVote {
 }
 
 model Document {
-  id        String   @id @default(uuid())
-  title     String
-  fileUrl   String
-  createdAt DateTime @default(now())
+  id          String         @id @default(uuid())
+  title       String
+  description String?        @db.Text
+  fileUrl     String
+  status      DocumentStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
+  authorId    String?
+  author      User?          @relation(fields: [authorId], references: [id])
+
+  departments Department[]
 }
 
 model Project {
-  id          String   @id @default(uuid())
+  id          String        @id @default(uuid())
   title       String
-  description String
-  createdAt   DateTime @default(now())
+  description String        @db.Text
+  fileUrl     String
+  status      ProjectStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id])
+  authorId    String
+  author      User          @relation(fields: [authorId], references: [id])
 
-  comments ProjectComment[]
-  votes    ProjectVote[]
+  departments Department[]
+  comments    ProjectComment[]
+  votes       ProjectVote[]
 }
 
 model ProjectComment {

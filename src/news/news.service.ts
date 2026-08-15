@@ -1,10 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNewsDto } from './dto/create-news.dto';
 import { UpdateNewsDto } from './dto/update-news.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { VoteType, NewsStatus, Prisma } from '@prisma/client';
+import { VoteType, NewsStatus, Prisma, Role } from '@prisma/client';
 
 @Injectable()
 export class NewsService {
@@ -27,7 +27,7 @@ export class NewsService {
   }
 
   async findAll(
-    currentUserId: string,
+    user: { sub: string; role: Role },
     page: number,
     limit: number,
     categoryId?: string,
@@ -41,8 +41,15 @@ export class NewsService {
     const where: Prisma.NewsWhereInput = {
       ...(categoryId && { categoryId }),
       ...(departmentId && { departments: { some: { id: departmentId } } }),
-      status: status ? status : { not: NewsStatus.ARCHIVED },
     };
+
+    if (user.role === Role.USER) {
+      where.status = NewsStatus.PUBLISHED;
+    } else if (status) {
+      where.status = status;
+    } else {
+      where.status = { not: NewsStatus.ARCHIVED };
+    }
 
     const validSortFields = [
       'id', 'title', 'content', 'imageUrl', 'status', 
@@ -90,7 +97,7 @@ export class NewsService {
     const mappedData = articles.map((article) => {
       const upvotes = article.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
       const downvotes = article.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
-      const currentUserVotes = article.votes.filter((v) => v.userId === currentUserId);
+      const currentUserVotes = article.votes.filter((v) => v.userId === user.sub);
       
       const { votes, ...rest } = article;
       
@@ -117,7 +124,7 @@ export class NewsService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, user?: { sub: string; role: Role }) {
     const news = await this.prisma.news.findUnique({
       where: { id },
       include: {
@@ -138,6 +145,10 @@ export class NewsService {
     });
 
     if (!news) throw new NotFoundException('Новину не знайдено');
+
+    if (user && user.role === Role.USER && news.status !== NewsStatus.PUBLISHED) {
+      throw new ForbiddenException('Access denied to unpublished or archived news');
+    }
 
     const upvotes = news.votes.filter((v) => v.voteType === VoteType.UPVOTE).length;
     const downvotes = news.votes.filter((v) => v.voteType === VoteType.DOWNVOTE).length;
@@ -239,16 +250,16 @@ export class NewsService {
     return { message: 'Порядок категорій оновлено' };
   }
 
-  async addComment(newsId: string, authorId: string, content: string) {
-    await this.findOne(newsId);
+  async addComment(newsId: string, authorId: string, content: string, user?: { sub: string; role: Role }) {
+    await this.findOne(newsId, user);
 
     return this.prisma.newsComment.create({
       data: { content, authorId, newsId },
     });
   }
 
-  async findComments(newsId: string) {
-    await this.findOne(newsId);
+  async findComments(newsId: string, user?: { sub: string; role: Role }) {
+    await this.findOne(newsId, user);
 
     return this.prisma.newsComment.findMany({
       where: { newsId },
@@ -296,8 +307,8 @@ export class NewsService {
     return { message: 'Comment successfully deleted' };
   }
 
-  async vote(newsId: string, userId: string, voteType: VoteType) {
-    await this.findOne(newsId);
+  async vote(newsId: string, userId: string, voteType: VoteType, user?: { sub: string; role: Role }) {
+    await this.findOne(newsId, user);
 
     const existingVote = await this.prisma.newsVote.findUnique({
       where: { userId_newsId: { userId, newsId } },

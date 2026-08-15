@@ -155,7 +155,7 @@ export class NewsController {
     @Query('departmentId') departmentId?: string,
   ) {
     return this.newsService.findAll(
-      req.user.sub,
+      req.user,
       page,
       limit,
       categoryId,
@@ -202,8 +202,8 @@ export class NewsController {
 
   @ApiOperation({ summary: 'Отримати деталі однієї новини з коментарями' })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.newsService.findOne(id);
+  findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
+    return this.newsService.findOne(id, req.user);
   }
 
   @ApiOperation({ summary: 'Редагувати новину (Тільки ADMIN)' })
@@ -227,13 +227,13 @@ export class NewsController {
     @Req() req: RequestWithUser,
     @Body() dto: CreateNewsCommentDto,
   ) {
-    return this.newsService.addComment(id, req.user.sub, dto.content);
+    return this.newsService.addComment(id, req.user.sub, dto.content, req.user);
   }
 
   @ApiOperation({ summary: 'Отримати всі коментарі до новини' })
   @Get(':id/comments')
-  findComments(@Param('id') id: string) {
-    return this.newsService.findComments(id);
+  findComments(@Req() req: RequestWithUser, @Param('id') id: string) {
+    return this.newsService.findComments(id, req.user);
   }
 
   @ApiOperation({ summary: 'Видалити коментар адміністратором (Тільки ADMIN)' })
@@ -255,6 +255,6 @@ export class NewsController {
     @Req() req: RequestWithUser,
     @Body() dto: VoteNewsDto,
   ) {
-    return this.newsService.vote(id, req.user.sub, dto.voteType);
+    return this.newsService.vote(id, req.user.sub, dto.voteType, req.user);
   }
 }

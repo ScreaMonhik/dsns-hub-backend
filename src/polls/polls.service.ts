@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePollDto } from './dto/create-poll.dto';
 import { UpdatePollDto } from './dto/update-poll.dto';
-import { PollStatus, Prisma } from '@prisma/client';
+import { PollStatus, Prisma, Role } from '@prisma/client';
 
 @Injectable()
 export class PollsService {
@@ -47,7 +47,7 @@ export class PollsService {
   }
 
   async findAll(
-    currentUserId: string,
+    user: { sub: string; role: Role },
     departmentId?: string,
     status?: PollStatus,
     sortBy?: 'createdAt' | 'votes' | 'author',
@@ -67,7 +67,9 @@ export class PollsService {
       ];
     }
 
-    if (status) {
+    if (user.role === Role.USER) {
+      whereClause.status = PollStatus.PUBLISHED;
+    } else if (status) {
       whereClause.status = status;
     } else {
       whereClause.status = { not: PollStatus.ARCHIVED };
@@ -92,7 +94,7 @@ export class PollsService {
           include: {
             _count: { select: { votes: true } },
             votes: {
-              where: { userId: currentUserId },
+              where: { userId: user.sub },
               select: { optionId: true },
             },
           },
@@ -149,7 +151,7 @@ export class PollsService {
     };
   }
 
-  async findOne(id: string, currentUserId: string) {
+  async findOne(id: string, user?: { sub: string; role: Role }) {
     const poll = await this.prisma.poll.findUnique({
       where: { id },
       include: {
@@ -168,7 +170,7 @@ export class PollsService {
           include: {
             _count: { select: { votes: true } },
             votes: {
-              where: { userId: currentUserId },
+              where: { userId: user?.sub },
               select: { optionId: true },
             },
           },
@@ -178,6 +180,10 @@ export class PollsService {
 
     if (!poll) {
       throw new NotFoundException('Опитування не знайдено');
+    }
+
+    if (user && user.role === Role.USER && poll.status !== PollStatus.PUBLISHED) {
+      throw new ForbiddenException('Access denied to unpublished or archived poll');
     }
 
     const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
@@ -200,7 +206,8 @@ export class PollsService {
     };
   }
 
-  async vote(pollId: string, userId: string, optionId: string) {
+  async vote(pollId: string, user: { sub: string; role: Role }, optionId: string) {
+    const userId = user.sub;
     const option = await this.prisma.pollOption.findFirst({
       where: { id: optionId, pollId },
       include: { poll: true },
@@ -230,7 +237,7 @@ export class PollsService {
         await this.prisma.pollVote.delete({
           where: { userId_optionId: { userId, optionId: existingVote.optionId } },
         });
-        return this.findOne(pollId, userId);
+        return this.findOne(pollId, user);
       } else {
         await this.prisma.pollVote.delete({
           where: { userId_optionId: { userId, optionId: existingVote.optionId } },
@@ -238,7 +245,7 @@ export class PollsService {
         await this.prisma.pollVote.create({
           data: { userId, optionId },
         });
-        return this.findOne(pollId, userId);
+        return this.findOne(pollId, user);
       }
     }
 
@@ -246,7 +253,7 @@ export class PollsService {
       data: { userId, optionId },
     });
 
-    return this.findOne(pollId, userId);
+    return this.findOne(pollId, user);
   }
 
   async update(id: string, dto: UpdatePollDto) {
