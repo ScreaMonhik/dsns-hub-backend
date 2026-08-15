@@ -17,6 +17,7 @@ import { Role, NewsStatus } from '@prisma/client';
 import { ApiBearerAuth, ApiTags, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { randomUUID } from 'crypto';
@@ -167,6 +168,9 @@ export class NewsController {
   }
 
   @ApiOperation({ summary: 'Отримати всі категорії новин' })
+  @UseInterceptors(CacheInterceptor)
+  @CacheKey('news_categories')
+  @CacheTTL(3600000) // Кешуємо на 1 годину (у мілісекундах)
   @Get('categories')
   findAllCategories() {
     return this.newsService.findAllCategories();

@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -22,6 +23,9 @@ export class DepartmentsController {
   }
 
   @ApiOperation({ summary: 'Отримати список всіх підрозділів' })
+  @UseInterceptors(CacheInterceptor)
+  @CacheKey('departments_list')
+  @CacheTTL(3600000) // Кешуємо на 1 годину (у мілісекундах)
   @Get()
   findAll() {
     return this.departmentsService.findAll();

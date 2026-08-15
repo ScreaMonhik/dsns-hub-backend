@@ -1,4 +1,6 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateNewsDto } from './dto/create-news.dto';
 import { UpdateNewsDto } from './dto/update-news.dto';
@@ -8,7 +10,10 @@ import { VoteType, NewsStatus, Prisma, Role } from '@prisma/client';
 
 @Injectable()
 export class NewsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
 
   async create(authorId: string, dto: CreateNewsDto) {
     return this.prisma.news.create({
@@ -208,9 +213,11 @@ export class NewsService {
   }
 
   async createCategory(dto: CreateCategoryDto) {
-    return this.prisma.newsCategory.create({
+    const category = await this.prisma.newsCategory.create({
       data: { name: dto.name },
     });
+    await this.cacheManager.del('news_categories');
+    return category;
   }
 
   async findAllCategories() {
@@ -223,10 +230,13 @@ export class NewsService {
     const category = await this.prisma.newsCategory.findUnique({ where: { id } });
     if (!category) throw new NotFoundException('Категорію не знайдено');
 
-    return this.prisma.newsCategory.update({
+    const updatedCategory = await this.prisma.newsCategory.update({
       where: { id },
       data: { name: dto.name },
     });
+    
+    await this.cacheManager.del('news_categories');
+    return updatedCategory;
   }
 
   async removeCategory(id: string) {
@@ -234,11 +244,12 @@ export class NewsService {
     if (!category) throw new NotFoundException('Категорію не знайдено');
     
     await this.prisma.newsCategory.delete({ where: { id } });
+    await this.cacheManager.del('news_categories');
+    
     return { message: 'Категорію успішно видалено' };
   }
 
   async reorderCategories(categoryIds: string[]) {
-    // Використовуємо транзакцію для безпечного масового оновлення
     const queries = categoryIds.map((id, index) =>
       this.prisma.newsCategory.update({
         where: { id },
@@ -247,6 +258,8 @@ export class NewsService {
     );
     
     await this.prisma.$transaction(queries);
+    await this.cacheManager.del('news_categories');
+    
     return { message: 'Порядок категорій оновлено' };
   }
 
