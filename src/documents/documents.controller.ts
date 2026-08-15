@@ -26,19 +26,11 @@ import { Role } from '@prisma/client';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { UpdateDocumentDto } from './dto/update-document.dto';
 import { QueryDocumentDto } from './dto/query-document.dto';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { randomUUID } from 'crypto';
-import { existsSync, createReadStream, mkdirSync } from 'fs';
+import { StorageService } from '../storage/storage.service';
 import type { Request, Response } from 'express';
 
 interface RequestWithUser extends Request {
   user: { sub: string; email: string; role: Role };
-}
-
-const uploadDir = join(process.cwd(), 'uploads', 'documents');
-if (!existsSync(uploadDir)) {
-  mkdirSync(uploadDir, { recursive: true });
 }
 
 @ApiTags('Documents')
@@ -46,7 +38,10 @@ if (!existsSync(uploadDir)) {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('documents')
 export class DocumentsController {
-  constructor(private readonly documentsService: DocumentsService) {}
+  constructor(
+    private readonly documentsService: DocumentsService,
+    private readonly storageService: StorageService,
+  ) {}
 
   @ApiOperation({ summary: 'Завантажити та створити документ у форматі PDF (Тільки ADMIN)' })
   @ApiConsumes('multipart/form-data')
@@ -67,14 +62,6 @@ export class DocumentsController {
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (req, file, cb) => {
-          const uniqueSuffix = randomUUID();
-          const ext = extname(file.originalname);
-          cb(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
       fileFilter: (req, file, cb) => {
         if (file.mimetype !== 'application/pdf') {
           return cb(new BadRequestException('Only PDF files are allowed'), false);
@@ -95,8 +82,7 @@ export class DocumentsController {
       throw new BadRequestException('PDF file is required');
     }
 
-    const fileUrl = `/documents/download/${file.filename}`;
-    return this.documentsService.create(req.user.sub, dto, fileUrl);
+    return this.documentsService.create(req.user.sub, dto, file);
   }
 
   @ApiOperation({ summary: 'Отримати список документів з пагінацією та фільтрацією' })
@@ -110,27 +96,20 @@ export class DocumentsController {
 
   @ApiOperation({ summary: 'Завантажити/переглянути файл PDF за іменем файлу' })
   @Get('download/:filename')
-  downloadFile(
+  async downloadFile(
     @Param('filename') filename: string,
     @Res({ passthrough: true }) res: Response,
-  ): StreamableFile {
-    if (filename.includes('..') || filename.includes('/')) {
-      throw new BadRequestException('Invalid filename');
-    }
+  ): Promise<StreamableFile> {
+    const fileKey = `documents/${filename}`;
+    const { stream, contentType, contentLength } = await this.storageService.getFileStream(fileKey);
 
-    const filePath = join(uploadDir, filename);
-
-    if (!existsSync(filePath)) {
-      throw new NotFoundException('Файл не знайдено на сервері');
-    }
-
-    const fileStream = createReadStream(filePath);
     res.set({
-      'Content-Type': 'application/pdf',
+      'Content-Type': contentType,
+      'Content-Length': contentLength.toString(),
       'Content-Disposition': `inline; filename="${filename}"`,
     });
 
-    return new StreamableFile(fileStream);
+    return new StreamableFile(stream);
   }
 
   @ApiOperation({ summary: 'Отримати деталі одного документа по ID' })
@@ -189,14 +168,6 @@ export class DocumentsController {
   @Patch(':id/file')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (req, file, cb) => {
-          const uniqueSuffix = randomUUID();
-          const ext = extname(file.originalname);
-          cb(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
       fileFilter: (req, file, cb) => {
         if (file.mimetype !== 'application/pdf') {
           return cb(new BadRequestException('Only PDF files are allowed'), false);
@@ -216,7 +187,6 @@ export class DocumentsController {
       throw new BadRequestException('PDF file is required');
     }
 
-    const fileUrl = `/documents/download/${file.filename}`;
-    return this.documentsService.updateFile(id, fileUrl);
+    return this.documentsService.updateFile(id, file);
   }
 }

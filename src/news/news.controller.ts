@@ -18,23 +18,14 @@ import { ApiBearerAuth, ApiTags, ApiOperation, ApiConsumes, ApiBody } from '@nes
 import type { Request, Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, createReadStream } from 'fs';
 import { ReorderCategoriesDto } from './dto/reorder-categories.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-
-const newsUploadDir = join(process.cwd(), 'uploads', 'news');
-if (!existsSync(newsUploadDir)) {
-  mkdirSync(newsUploadDir, { recursive: true });
-}
+import { StorageService } from '../storage/storage.service';
+import { FileSecurityService } from '../security/file-security.service';
 
 interface RequestWithUser extends Request {
   user: { sub: string; email: string; role: Role };
 }
-
-import { FileSecurityService } from '../security/file-security.service';
 
 @ApiTags('News')
 @ApiBearerAuth()
@@ -44,6 +35,7 @@ export class NewsController {
   constructor(
     private readonly newsService: NewsService,
     private readonly fileSecurityService: FileSecurityService,
+    private readonly storageService: StorageService,
   ) {}
 
   @ApiOperation({ summary: 'Створити статтю новин (Тільки ADMIN)' })
@@ -66,14 +58,6 @@ export class NewsController {
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: newsUploadDir,
-        filename: (req, file, cb) => {
-          const uniqueSuffix = randomUUID();
-          const ext = extname(file.originalname);
-          cb(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
       fileFilter: (req, file, cb) => {
         if (!file.mimetype.match(/\/(jpg|jpeg|png|mp4|webm|ogg)$/)) {
           return cb(new BadRequestException('Дозволені тільки зображення (JPEG/PNG) або відео (MP4/WEBM/OGG)!'), false);
@@ -86,60 +70,64 @@ export class NewsController {
   async uploadMedia(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('Файл не завантажено');
     
-    const filePath = join(newsUploadDir, file.filename);
-    await this.fileSecurityService.validateMediaSignature(filePath);
+    await this.fileSecurityService.validateMediaSignature(file.buffer);
+    const fileKey = await this.storageService.uploadFile(file, 'news');
     
-    return { url: `/news/media/${file.filename}` };
+    return { url: `/news/media/${fileKey.split('/').pop()}` };
   }
 
   @ApiOperation({ summary: 'Отримати медіафайл (з підтримкою Range-запитів для відео)' })
   @Get('media/:filename')
-  getMedia(
+  async getMedia(
     @Param('filename') filename: string,
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const filePath = join(newsUploadDir, filename);
-    if (!existsSync(filePath)) throw new NotFoundException('Файл не знайдено');
+    if (filename.includes('..') || filename.includes('/')) {
+      throw new BadRequestException('Invalid filename');
+    }
 
-    const stat = require('fs').statSync(filePath);
-    const fileSize = stat.size;
+    const fileKey = `news/${filename}`;
     const range = req.headers.range;
 
-    let contentType = 'application/octet-stream';
-    if (filename.endsWith('.png')) contentType = 'image/png';
-    else if (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) contentType = 'image/jpeg';
-    else if (filename.endsWith('.mp4')) contentType = 'video/mp4';
-    else if (filename.endsWith('.webm')) contentType = 'video/webm';
-    else if (filename.endsWith('.ogg')) contentType = 'video/ogg';
+    try {
+      if (range) {
+        // Отримуємо попередній потік для визначення загального розміру через head або звичайний getStream (або робимо запит заголовків)
+        // Для спрощення та оптимізації спершу робимо виклик для отримання метаданих через головний метод
+        const headData = await this.storageService.getFileStream(fileKey);
+        const fileSize = headData.contentLength;
+        headData.stream.destroy(); // закриваємо непотрібний потік
 
-    if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-      if (start >= fileSize || end >= fileSize || start > end) {
-        res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
-        return;
+        if (start >= fileSize || end >= fileSize || start > end) {
+          res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
+          return;
+        }
+
+        const { stream, contentType, contentLength } = await this.storageService.getFileRangeStream(fileKey, start, end);
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': contentLength,
+          'Content-Type': contentType,
+        });
+        stream.pipe(res);
+      } else {
+        const { stream, contentType, contentLength } = await this.storageService.getFileStream(fileKey);
+
+        res.writeHead(200, {
+          'Content-Length': contentLength,
+          'Content-Type': contentType,
+          'Accept-Ranges': 'bytes',
+        });
+        stream.pipe(res);
       }
-
-      const chunksize = end - start + 1;
-      const fileStream = createReadStream(filePath, { start, end });
-      
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunksize,
-        'Content-Type': contentType,
-      });
-      fileStream.pipe(res);
-    } else {
-      res.writeHead(200, {
-        'Content-Length': fileSize,
-        'Content-Type': contentType,
-        'Accept-Ranges': 'bytes',
-      });
-      createReadStream(filePath).pipe(res);
+    } catch (error) {
+      throw new NotFoundException('Файл не знайдено');
     }
   }
 

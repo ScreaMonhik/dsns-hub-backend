@@ -1,15 +1,16 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { Prisma } from '@prisma/client';
-import * as fs from 'fs/promises';
-import { join, extname } from 'path';
-import { v4 as uuidv4 } from 'uuid';
 import { UpdateUserDto } from './dto/update-user.dto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   async findAll(page: number, limit: number, search?: string) {
     const skip = (page - 1) * limit;
@@ -112,14 +113,8 @@ export class UsersService {
       throw new BadRequestException('File is required');
     }
 
-    const filename = `${uuidv4()}${extname(file.originalname)}`;
-    const uploadDir = join(process.cwd(), 'uploads', 'avatars');
-    const uploadPath = join(uploadDir, filename);
-
-    await fs.mkdir(uploadDir, { recursive: true });
-    await fs.writeFile(uploadPath, file.buffer);
-
-    const avatarUrl = `/uploads/avatars/${filename}`;
+    const fileKey = await this.storageService.uploadFile(file, 'avatars');
+    const avatarUrl = `/uploads/avatars/${fileKey.split('/').pop()}`;
 
     await this.prisma.user.update({
       where: { id: userId },

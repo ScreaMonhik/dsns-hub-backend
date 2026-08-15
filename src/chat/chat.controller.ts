@@ -1,9 +1,8 @@
 import { Controller, Get, Post, Patch, Delete, Body, Param, UseGuards, Req, Query, ParseIntPipe, DefaultValuePipe, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { v4 as uuidv4 } from 'uuid';
 import { ChatService } from './chat.service';
+import { StorageService } from '../storage/storage.service';
+import { FileSecurityService } from '../security/file-security.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { ManageMemberDto, PinChatDto, ReorderPinnedChatsDto, UpdateMemberRoleDto } from './dto/manage-member.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -22,7 +21,11 @@ interface RequestWithUser extends Request {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('chat')
 export class ChatController {
-  constructor(private readonly chatService: ChatService) {}
+  constructor(
+    private readonly chatService: ChatService,
+    private readonly storageService: StorageService,
+    private readonly fileSecurityService: FileSecurityService,
+  ) {}
 
   @ApiOperation({ summary: 'Створити нову групу' })
   @Post('groups')
@@ -97,18 +100,9 @@ export class ChatController {
     },
   })
   @Post('groups/:groupId/avatar')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: './uploads/chat',
-        filename: (req, file, callback) => {
-          const uniqueSuffix = uuidv4();
-          const ext = extname(file.originalname);
-          callback(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
-    }),
-  )
+  @UseInterceptors(FileInterceptor('file', {
+    limits: { fileSize: 5 * 1024 * 1024 }, // Обмеження 5MB для аватарів
+  }))
   async uploadAvatar(
     @Param('groupId') groupId: string,
     @Req() req: RequestWithUser,
@@ -118,7 +112,11 @@ export class ChatController {
       throw new BadRequestException('File is required');
     }
 
-    const avatarUrl = `/uploads/chat/${file.filename}`;
+    await this.fileSecurityService.validateMediaSignature(file.buffer);
+    
+    const fileKey = await this.storageService.uploadFile(file, 'chat');
+    const avatarUrl = `/uploads/chat/${fileKey.split('/').pop()}`;
+    
     await this.chatService.updateAvatar(groupId, req.user, avatarUrl);
 
     return { url: avatarUrl };

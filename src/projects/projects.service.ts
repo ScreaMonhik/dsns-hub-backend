@@ -1,26 +1,24 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FileSecurityService } from '../security/file-security.service';
+import { StorageService } from '../storage/storage.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectDto } from './dto/query-project.dto';
 import { VoteType, ProjectStatus, Role, Prisma } from '@prisma/client';
-import * as fs from 'fs/promises';
-import { join } from 'path';
 
 @Injectable()
 export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly fileSecurityService: FileSecurityService,
+    private readonly storageService: StorageService,
   ) {}
 
-  async create(authorId: string, dto: CreateProjectDto, fileUrl: string) {
-    const filename = fileUrl.split('/').pop() || '';
-    const filePath = join(process.cwd(), 'uploads', 'projects', filename);
-    
-    // Strict binary signature validation before saving to DB
-    await this.fileSecurityService.validatePdfSignature(filePath);
+  async create(authorId: string, dto: CreateProjectDto, file: Express.Multer.File) {
+    await this.fileSecurityService.validatePdfSignature(file.buffer);
+    const fileKey = await this.storageService.uploadFile(file, 'projects');
+    const fileUrl = `/projects/download/${fileKey.split('/').pop()}`;
 
     if (dto.departmentIds && dto.departmentIds.length > 0) {
       const departments = await this.prisma.department.findMany({
@@ -241,12 +239,7 @@ export class ProjectsService {
 
     const filename = project.fileUrl.split('/').pop();
     if (filename) {
-      const filePath = join(process.cwd(), 'uploads', 'projects', filename);
-      try {
-        await fs.unlink(filePath);
-      } catch (error) {
-        // Ігноруємо помилку
-      }
+      await this.storageService.deleteFile(`projects/${filename}`);
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -292,33 +285,25 @@ export class ProjectsService {
     return { message: 'Comment successfully deleted' };
   }
 
-  async updateFile(id: string, fileUrl: string) {
-    const newFilename = fileUrl.split('/').pop() || '';
-    const newFilePath = join(process.cwd(), 'uploads', 'projects', newFilename);
-    
-    // Strict binary signature validation for the newly updated file
-    await this.fileSecurityService.validatePdfSignature(newFilePath);
+  async updateFile(id: string, file: Express.Multer.File) {
+    await this.fileSecurityService.validatePdfSignature(file.buffer);
 
     const project = await this.prisma.project.findUnique({ where: { id } });
     if (!project) {
-      await fs.unlink(newFilePath).catch(() => {});
       throw new NotFoundException('Project not found');
     }
 
-    // Видаляємо старий файл з диска перед збереженням нового
     const oldFilename = project.fileUrl.split('/').pop();
     if (oldFilename) {
-      const oldFilePath = join(process.cwd(), 'uploads', 'projects', oldFilename);
-      try {
-        await fs.unlink(oldFilePath);
-      } catch (error) {
-        // Ігноруємо помилку, якщо старий файл відсутній
-      }
+      await this.storageService.deleteFile(`projects/${oldFilename}`);
     }
+
+    const newFileKey = await this.storageService.uploadFile(file, 'projects');
+    const newFileUrl = `/projects/download/${newFileKey.split('/').pop()}`;
 
     return this.prisma.project.update({
       where: { id },
-      data: { fileUrl },
+      data: { fileUrl: newFileUrl },
       include: {
         author: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
         departments: { select: { id: true, name: true } },

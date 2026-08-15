@@ -1,15 +1,17 @@
-import { Controller, Get, Param, Res, UseGuards, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Param, Res, UseGuards, NotFoundException, BadRequestException, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
-import { join } from 'path';
-import { existsSync } from 'fs';
 import { AppService } from './app.service';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { StorageService } from './storage/storage.service';
 
 @ApiTags('System')
 @Controller()
 export class AppController {
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    private readonly storageService: StorageService,
+  ) {}
 
   @Get()
   getHello(): string {
@@ -38,18 +40,23 @@ export class AppController {
     return this.serveProtectedFile('news', filename, res);
   }
 
-  private serveProtectedFile(folder: string, filename: string, res: Response) {
-    // Path Traversal protection
+  private async serveProtectedFile(folder: string, filename: string, res: Response): Promise<StreamableFile> {
     if (filename.includes('..') || filename.includes('/')) {
       throw new BadRequestException('Invalid filename');
     }
 
-    const filePath = join(process.cwd(), 'uploads', folder, filename);
+    try {
+      const fileKey = `${folder}/${filename}`;
+      const { stream, contentType, contentLength } = await this.storageService.getFileStream(fileKey);
 
-    if (!existsSync(filePath)) {
-      throw new NotFoundException('File not found');
+      res.set({
+        'Content-Type': contentType,
+        'Content-Length': contentLength.toString(),
+      });
+
+      return new StreamableFile(stream);
+    } catch (error) {
+      throw new NotFoundException('File not found in storage');
     }
-
-    return res.sendFile(filePath);
   }
 }

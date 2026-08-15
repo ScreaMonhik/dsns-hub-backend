@@ -18,6 +18,7 @@ import { ChatModule } from './chat/chat.module';
 import { UsersModule } from './users/users.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { SecurityModule } from './security/security.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -47,7 +48,7 @@ import { SecurityModule } from './security/security.module';
     ProjectsModule, 
     PollsModule, 
     ChatModule, 
-    UsersModule, SecurityModule
+    UsersModule, SecurityModule, StorageModule
   ],
   controllers: [AppController],
   providers: [

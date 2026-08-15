@@ -29,18 +29,10 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { Role } from '@prisma/client';
-import { diskStorage } from 'multer';
-import { extname, join } from 'path';
-import { randomUUID } from 'crypto';
-import { existsSync, createReadStream, mkdirSync } from 'fs';
+import { StorageService } from '../storage/storage.service';
 
 interface RequestWithUser extends Request {
   user: { sub: string; email: string; role: Role };
-}
-
-const uploadDir = join(process.cwd(), 'uploads', 'projects');
-if (!existsSync(uploadDir)) {
-  mkdirSync(uploadDir, { recursive: true });
 }
 
 @ApiTags('Projects')
@@ -48,7 +40,10 @@ if (!existsSync(uploadDir)) {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(
+    private readonly projectsService: ProjectsService,
+    private readonly storageService: StorageService,
+  ) {}
 
   @ApiOperation({ summary: 'Створити новий проєкт/ініціативу з PDF файлом (Тільки ADMIN)' })
   @ApiConsumes('multipart/form-data')
@@ -69,14 +64,6 @@ export class ProjectsController {
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (req, file, cb) => {
-          const uniqueSuffix = randomUUID();
-          const ext = extname(file.originalname);
-          cb(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
       fileFilter: (req, file, cb) => {
         if (file.mimetype !== 'application/pdf') {
           return cb(new BadRequestException('Only PDF files are allowed'), false);
@@ -97,33 +84,25 @@ export class ProjectsController {
       throw new BadRequestException('PDF file is required');
     }
 
-    const fileUrl = `/projects/download/${file.filename}`;
-    return this.projectsService.create(req.user.sub, dto, fileUrl);
+    return this.projectsService.create(req.user.sub, dto, file);
   }
 
   @ApiOperation({ summary: 'Завантажити/переглянути PDF файл проєкту за іменем файлу' })
   @Get('download/:filename')
-  downloadFile(
+  async downloadFile(
     @Param('filename') filename: string,
     @Res({ passthrough: true }) res: Response,
-  ): StreamableFile {
-    if (filename.includes('..') || filename.includes('/')) {
-      throw new BadRequestException('Invalid filename');
-    }
+  ): Promise<StreamableFile> {
+    const fileKey = `projects/${filename}`;
+    const { stream, contentType, contentLength } = await this.storageService.getFileStream(fileKey);
 
-    const filePath = join(uploadDir, filename);
-
-    if (!existsSync(filePath)) {
-      throw new NotFoundException('Файл не знайдено на сервері');
-    }
-
-    const fileStream = createReadStream(filePath);
     res.set({
-      'Content-Type': 'application/pdf',
+      'Content-Type': contentType,
+      'Content-Length': contentLength.toString(),
       'Content-Disposition': `inline; filename="${filename}"`,
     });
 
-    return new StreamableFile(fileStream);
+    return new StreamableFile(stream);
   }
 
   @ApiOperation({ summary: 'Отримати список проєктів з пагінацією та фільтрацією' })
@@ -219,14 +198,6 @@ export class ProjectsController {
   @Patch(':id/file')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorage({
-        destination: uploadDir,
-        filename: (req, file, cb) => {
-          const uniqueSuffix = randomUUID();
-          const ext = extname(file.originalname);
-          cb(null, `${uniqueSuffix}${ext}`);
-        },
-      }),
       fileFilter: (req, file, cb) => {
         if (file.mimetype !== 'application/pdf') {
           return cb(new BadRequestException('Only PDF files are allowed'), false);
@@ -246,7 +217,6 @@ export class ProjectsController {
       throw new BadRequestException('PDF file is required');
     }
 
-    const fileUrl = `/projects/download/${file.filename}`;
-    return this.projectsService.updateFile(id, fileUrl);
+    return this.projectsService.updateFile(id, file);
   }
 }
