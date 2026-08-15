@@ -1,11 +1,11 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { Injectable, InternalServerErrorException, Logger, OnModuleInit } from '@nestjs/common';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { extname } from 'path';
 import { Readable } from 'stream';
 
 @Injectable()
-export class StorageService {
+export class StorageService implements OnModuleInit {
   private readonly s3Client: S3Client;
   private readonly bucketName = process.env.MINIO_BUCKET_NAME || 'dsns-bucket';
   private readonly logger = new Logger(StorageService.name);
@@ -20,6 +20,24 @@ export class StorageService {
       },
       forcePathStyle: true, // Required for MinIO
     });
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.ensureBucketExists();
+  }
+
+  private async ensureBucketExists(): Promise<void> {
+    try {
+      await this.s3Client.send(new HeadBucketCommand({ Bucket: this.bucketName }));
+    } catch (error: unknown) {
+      this.logger.warn(`Bucket "${this.bucketName}" does not exist. Creating now...`);
+      try {
+        await this.s3Client.send(new CreateBucketCommand({ Bucket: this.bucketName }));
+        this.logger.log(`Bucket "${this.bucketName}" successfully created.`);
+      } catch (createError: unknown) {
+        this.logger.error(`Failed to create bucket "${this.bucketName}"`, createError);
+      }
+    }
   }
 
   async uploadFile(file: Express.Multer.File, folder: string): Promise<string> {
