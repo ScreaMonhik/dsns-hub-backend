@@ -135,6 +135,10 @@ model News {
 
   comments     NewsComment[]
   votes        NewsVote[]
+
+  @@index([status, createdAt])
+  @@index([categoryId])
+  @@index([authorId])
 }
 
 model NewsComment {
@@ -147,6 +151,8 @@ model NewsComment {
 
   newsId String
   news   News   @relation(fields: [newsId], references: [id], onDelete: Cascade)
+
+  @@index([newsId, createdAt])
 }
 
 model NewsVote {
@@ -172,6 +178,9 @@ model Document {
   author      User?          @relation(fields: [authorId], references: [id])
 
   departments Department[]
+
+  @@index([status, createdAt])
+  @@index([authorId])
 }
 
 model Project {
@@ -189,6 +198,9 @@ model Project {
   departments Department[]
   comments    ProjectComment[]
   votes       ProjectVote[]
+
+  @@index([status, createdAt])
+  @@index([authorId])
 }
 
 model ProjectComment {
@@ -201,6 +213,8 @@ model ProjectComment {
 
   projectId String
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
 }
 
 model ProjectVote {
@@ -252,6 +266,8 @@ model ChatMessage {
   group   ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   readReceipts MessageReadReceipt[]
+
+  @@index([groupId, createdAt])
 }
 
 model MessageReadReceipt {
@@ -291,6 +307,9 @@ model Poll {
   departments  Department[]
   
   options      PollOption[]
+
+  @@index([status, createdAt])
+  @@index([authorId])
 }
 
 model PollOption {
