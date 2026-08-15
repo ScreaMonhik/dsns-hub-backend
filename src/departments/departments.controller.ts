@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Body, UseGuards, UseInterceptors } from '@nestjs/common';
-import { CacheInterceptor, CacheKey, CacheTTL } from '@nestjs/cache-manager';
+import { Controller, Get, Post, Body, UseGuards, UseInterceptors, Query } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
+import { QueryDepartmentDto } from './dto/query-department.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -22,12 +23,11 @@ export class DepartmentsController {
     return this.departmentsService.create(dto);
   }
 
-  @ApiOperation({ summary: 'Отримати список всіх підрозділів' })
+  @ApiOperation({ summary: 'Отримати список підрозділів (з пагінацією та пошуком)' })
   @UseInterceptors(CacheInterceptor)
-  @CacheKey('departments_list')
-  @CacheTTL(3600000) // Кешуємо на 1 годину (у мілісекундах)
+  @CacheTTL(3600000) // NestJS автоматично згенерує ключ кешу на основі URL з query-параметрами
   @Get()
-  findAll() {
-    return this.departmentsService.findAll();
+  findAll(@Query() query: QueryDepartmentDto) {
+    return this.departmentsService.findAll(query);
   }
 }
