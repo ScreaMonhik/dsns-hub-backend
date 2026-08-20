@@ -43,6 +43,7 @@ export class AuthService {
         passwordHash: hashedPassword,
         firstName: dto.firstName,
         lastName: dto.lastName,
+        departmentId: dto.departmentId,
       },
     });
 

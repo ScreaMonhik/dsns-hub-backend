@@ -1,5 +1,5 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength, Matches } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsEmail, IsNotEmpty, IsString, MinLength, Matches, IsOptional, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class RegisterDto {
   @ApiProperty({ example: 'admin@dsns.gov.ua', description: 'Службова пошта' })
@@ -24,6 +24,11 @@ export class RegisterDto {
   @IsString()
   @IsNotEmpty({ message: 'Прізвище не може бути порожнім' })
   lastName!: string;
+
+  @ApiPropertyOptional({ description: 'ID підрозділу', format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  departmentId?: string;
 }
 
 export class LoginDto {

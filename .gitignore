@@ -63,6 +63,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # AI/Bot helpers and logs
 .claude-dev-helper/
 structure.txt
+prisma/org_structure.json
 
 # TypeScript incremental build cache
 *.tsbuildinfo

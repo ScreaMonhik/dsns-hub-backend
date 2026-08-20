@@ -66,6 +66,9 @@ model User {
   refreshToken        String?  @db.Text
   createdAt           DateTime @default(now())
 
+  departmentId        String?
+  department          Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
   // Зв'язки
   news            News[]
   newsComments    NewsComment[]
@@ -82,6 +85,8 @@ model User {
   documents       Document[]
   systemAuditLogs SystemAuditLog[]
   apiAuditLogs    ApiAuditLog[]
+
+  @@index([departmentId])
 }
 
 model SystemAuditLog {
@@ -111,12 +116,19 @@ model ApiAuditLog {
 
 model Department {
   id         String      @id @default(uuid())
-  name       String      @unique
+  name       String
+  parentId   String?
+  parent     Department? @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children   Department[] @relation("DepartmentTree")
+
+  users      User[]
   documents  Document[]
   polls      Poll[]
   chatGroups ChatGroup[]
   news       News[]
   projects   Project[]
+
+  @@index([parentId])
 }
 
 model News {
