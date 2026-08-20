@@ -105,11 +105,16 @@ export class NewsService {
     ]);
 
     const mappedData = articles.map((article) => {
-      const { votes, upvotesCount, downvotesCount, ...rest } = article;
+      const { votes, upvotesCount, downvotesCount, imageUrl, author, ...rest } = article;
       const currentUserVote = votes.length > 0 ? votes[0].voteType : null;
       
       return { 
         ...rest,
+        imageUrl: imageUrl ?? '',
+        author: {
+          ...author,
+          avatarUrl: author.avatarUrl ?? '',
+        },
         votes: votes,
         upvotes: upvotesCount,
         downvotes: downvotesCount,
@@ -127,7 +132,8 @@ export class NewsService {
       meta: {
         total,
         page,
-        lastPage: Math.ceil(total / limit),
+        lastPage: Math.ceil(total / limit) || 1,
+        limit,
       },
     };
   }
