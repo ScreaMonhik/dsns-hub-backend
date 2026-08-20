@@ -277,20 +277,20 @@ export class PollsService {
     return this.findOne(pollId, user);
   }
 
-  async updateVisibility(id: string, extendMonths: number) {
+  async updateVisibility(id: string, extendDays: number) {
     const poll = await this.prisma.poll.findUnique({ where: { id } });
     if (!poll) {
-      throw new NotFoundException('Опитування не знайдено');
+      throw new NotFoundException('Poll not found');
     }
     
     if (poll.status !== PollStatus.ARCHIVED) {
-      throw new BadRequestException('Змінювати видимість можна лише для опитувань, які знаходяться в архіві');
+      throw new BadRequestException('Visibility can only be changed for archived polls');
     }
 
     let newVisibleDate: Date | null = null;
-    if (extendMonths > 0) {
+    if (extendDays > 0) {
       newVisibleDate = new Date();
-      newVisibleDate.setMonth(newVisibleDate.getMonth() + extendMonths);
+      newVisibleDate.setDate(newVisibleDate.getDate() + extendDays);
     }
 
     return this.prisma.poll.update({

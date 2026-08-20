@@ -36,11 +36,11 @@ export class PollsController {
     return this.pollsService.update(id, dto);
   }
 
-  @ApiOperation({ summary: 'Керувати видимістю архівного опитування (Тільки ADMIN)' })
+  @ApiOperation({ summary: 'Manage visibility of an archived poll (ADMIN only)' })
   @Roles(Role.ADMIN)
   @Patch(':id/visibility')
   updateVisibility(@Param('id') id: string, @Body() dto: UpdatePollVisibilityDto) {
-    return this.pollsService.updateVisibility(id, dto.extendMonths);
+    return this.pollsService.updateVisibility(id, dto.extendDays);
   }
 
   @ApiOperation({ summary: 'Видалити опитування (Тільки ADMIN)' })

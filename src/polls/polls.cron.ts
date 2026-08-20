@@ -14,7 +14,7 @@ export class PollsCronService {
     try {
       const now = new Date();
       const visibleUntil = new Date(now);
-      visibleUntil.setMonth(visibleUntil.getMonth() + 1); // Автоматично показуємо 1 місяць після закінчення
+      visibleUntil.setDate(visibleUntil.getDate() + 30); // Default visibility extension: 30 days
 
       const result = await this.prisma.poll.updateMany({
         where: {
