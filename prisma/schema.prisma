@@ -297,13 +297,14 @@ model MessagesAuditLog {
 }
 
 model Poll {
-  id          String     @id @default(uuid())
-  title       String
-  description String?    @db.Text
-  status      PollStatus @default(PUBLISHED)
-  expiresAt   DateTime?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id                   String     @id @default(uuid())
+  title                String
+  description          String?    @db.Text
+  status               PollStatus @default(PUBLISHED)
+  expiresAt            DateTime?
+  archivedVisibleUntil DateTime?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
   authorId     String?
   author       User?      @relation(fields: [authorId], references: [id])

@@ -58,22 +58,35 @@ export class PollsService {
     const pageNumber = Math.max(1, Number(page) || 1);
     const limitNumber = Math.max(1, Number(limit) || 10);
 
-    const whereClause: Prisma.PollWhereInput = {};
+    const andConditions: Prisma.PollWhereInput[] = [];
 
     if (departmentId) {
-      whereClause.OR = [
-        { departments: { some: { id: departmentId } } },
-        { departments: { none: {} } },
-      ];
+      andConditions.push({
+        OR: [
+          { departments: { some: { id: departmentId } } },
+          { departments: { none: {} } },
+        ],
+      });
     }
 
     if (user.role === Role.USER) {
-      whereClause.status = PollStatus.PUBLISHED;
+      andConditions.push({
+        OR: [
+          { status: PollStatus.PUBLISHED },
+          {
+            status: PollStatus.ARCHIVED,
+            archivedVisibleUntil: { gt: new Date() },
+          },
+        ],
+      });
     } else if (status) {
-      whereClause.status = status;
+      andConditions.push({ status });
     } else {
-      whereClause.status = { not: PollStatus.ARCHIVED };
+      andConditions.push({ status: { not: PollStatus.ARCHIVED } });
     }
+
+    const whereClause: Prisma.PollWhereInput =
+      andConditions.length > 0 ? { AND: andConditions } : {};
 
     const polls = await this.prisma.poll.findMany({
       where: whereClause,
@@ -182,8 +195,16 @@ export class PollsService {
       throw new NotFoundException('Опитування не знайдено');
     }
 
-    if (user && user.role === Role.USER && poll.status !== PollStatus.PUBLISHED) {
-      throw new ForbiddenException('Access denied to unpublished or archived poll');
+    if (user && user.role === Role.USER) {
+      const isPublished = poll.status === PollStatus.PUBLISHED;
+      const isArchivedAndVisible =
+        poll.status === PollStatus.ARCHIVED &&
+        poll.archivedVisibleUntil &&
+        new Date(poll.archivedVisibleUntil) > new Date();
+
+      if (!isPublished && !isArchivedAndVisible) {
+        throw new ForbiddenException('Access denied to unpublished or hidden archived poll');
+      }
     }
 
     const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
@@ -254,6 +275,37 @@ export class PollsService {
     });
 
     return this.findOne(pollId, user);
+  }
+
+  async updateVisibility(id: string, extendMonths: number) {
+    const poll = await this.prisma.poll.findUnique({ where: { id } });
+    if (!poll) {
+      throw new NotFoundException('Опитування не знайдено');
+    }
+    
+    if (poll.status !== PollStatus.ARCHIVED) {
+      throw new BadRequestException('Змінювати видимість можна лише для опитувань, які знаходяться в архіві');
+    }
+
+    let newVisibleDate: Date | null = null;
+    if (extendMonths > 0) {
+      newVisibleDate = new Date();
+      newVisibleDate.setMonth(newVisibleDate.getMonth() + extendMonths);
+    }
+
+    return this.prisma.poll.update({
+      where: { id },
+      data: { archivedVisibleUntil: newVisibleDate },
+      include: {
+        departments: true,
+        options: {
+          orderBy: { orderIndex: 'asc' },
+          include: {
+            _count: { select: { votes: true } },
+          },
+        },
+      },
+    });
   }
 
   async update(id: string, dto: UpdatePollDto) {

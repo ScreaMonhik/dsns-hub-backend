@@ -3,6 +3,7 @@ import { PollsService } from './polls.service';
 import { CreatePollDto } from './dto/create-poll.dto';
 import { UpdatePollDto } from './dto/update-poll.dto';
 import { VotePollDto } from './dto/vote-poll.dto';
+import { UpdatePollVisibilityDto } from './dto/update-poll-visibility.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -33,6 +34,13 @@ export class PollsController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdatePollDto) {
     return this.pollsService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Керувати видимістю архівного опитування (Тільки ADMIN)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/visibility')
+  updateVisibility(@Param('id') id: string, @Body() dto: UpdatePollVisibilityDto) {
+    return this.pollsService.updateVisibility(id, dto.extendMonths);
   }
 
   @ApiOperation({ summary: 'Видалити опитування (Тільки ADMIN)' })

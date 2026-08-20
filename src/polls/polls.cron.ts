@@ -13,6 +13,8 @@ export class PollsCronService {
   async handleExpiredPolls() {
     try {
       const now = new Date();
+      const visibleUntil = new Date(now);
+      visibleUntil.setMonth(visibleUntil.getMonth() + 1); // Автоматично показуємо 1 місяць після закінчення
 
       const result = await this.prisma.poll.updateMany({
         where: {
@@ -23,6 +25,7 @@ export class PollsCronService {
         },
         data: {
           status: PollStatus.ARCHIVED,
+          archivedVisibleUntil: visibleUntil,
         },
       });
 
