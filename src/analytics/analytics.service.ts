@@ -15,20 +15,21 @@ export interface DashboardAnalyticsResponse {
     votes: number;
   }>;
   recentActivity: {
-    latestUsers: Array<{
-      id: string;
-      firstName: string;
-      lastName: string;
-      email: string;
-      createdAt: string;
-    }>;
-    pendingProjects: Array<{
-      id: string;
-      title: string;
-      authorName: string;
-      createdAt: string;
-    }>;
-  };
+        latestUsers: Array<{
+          id: string;
+          firstName: string;
+          lastName: string;
+          email: string;
+          createdAt: string;
+        }>;
+        pendingDrafts: Array<{
+          id: string;
+          title: string;
+          type: 'NEWS' | 'PROJECT' | 'POLL' | 'DOCUMENT';
+          authorName: string;
+          createdAt: string;
+        }>;
+      };
 }
 
 @Injectable()
@@ -45,6 +46,9 @@ export class AnalyticsService {
       pollTotalVotes,
       latestUsers,
       pendingProjects,
+      pendingNews,
+      pendingPolls,
+      pendingDocs,
     ] = await Promise.all([
       this.prisma.user.groupBy({ by: ['isActive', 'role'], _count: { id: true } }),
       this.prisma.project.groupBy({ by: ['status'], _count: { id: true } }),
@@ -57,6 +61,24 @@ export class AnalyticsService {
         select: { id: true, firstName: true, lastName: true, email: true, createdAt: true },
       }),
       this.prisma.project.findMany({
+        where: { status: 'DRAFT' },
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, title: true, createdAt: true, author: { select: { firstName: true, lastName: true } } },
+      }),
+      this.prisma.news.findMany({
+        where: { status: 'DRAFT' },
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, title: true, createdAt: true, author: { select: { firstName: true, lastName: true } } },
+      }),
+      this.prisma.poll.findMany({
+        where: { status: 'DRAFT' },
+        take: 5,
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, title: true, createdAt: true, author: { select: { firstName: true, lastName: true } } },
+      }),
+      this.prisma.document.findMany({
         where: { status: 'DRAFT' },
         take: 5,
         orderBy: { createdAt: 'desc' },
@@ -95,7 +117,41 @@ export class AnalyticsService {
       };
     });
 
-    // 3. Format Response
+    // 3. Normalize and sort all drafts
+    const allDrafts = [
+      ...pendingProjects.map((p) => ({
+        id: p.id,
+        title: p.title,
+        type: 'PROJECT' as const,
+        authorName: `${p.author.lastName} ${p.author.firstName}`.trim(),
+        createdAt: p.createdAt,
+      })),
+      ...pendingNews.map((n) => ({
+        id: n.id,
+        title: n.title,
+        type: 'NEWS' as const,
+        authorName: `${n.author.lastName} ${n.author.firstName}`.trim(),
+        createdAt: n.createdAt,
+      })),
+      ...pendingPolls.map((p) => ({
+        id: p.id,
+        title: p.title,
+        type: 'POLL' as const,
+        authorName: p.author ? `${p.author.lastName} ${p.author.firstName}`.trim() : 'Невідомо',
+        createdAt: p.createdAt,
+      })),
+      ...pendingDocs.map((d) => ({
+        id: d.id,
+        title: d.title,
+        type: 'DOCUMENT' as const,
+        authorName: d.author ? `${d.author.lastName} ${d.author.firstName}`.trim() : 'Невідомо',
+        createdAt: d.createdAt,
+      })),
+    ];
+
+    allDrafts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    // 4. Format Response
     return {
       summary: {
         users: {
@@ -129,11 +185,9 @@ export class AnalyticsService {
           ...u,
           createdAt: u.createdAt.toISOString(),
         })),
-        pendingProjects: pendingProjects.map((p) => ({
-          id: p.id,
-          title: p.title,
-          authorName: `${p.author.lastName} ${p.author.firstName}`.trim(),
-          createdAt: p.createdAt.toISOString(),
+        pendingDrafts: allDrafts.slice(0, 5).map((d) => ({
+          ...d,
+          createdAt: d.createdAt.toISOString(),
         })),
       },
     };
