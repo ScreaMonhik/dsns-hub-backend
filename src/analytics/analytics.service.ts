@@ -84,25 +84,21 @@ export class AnalyticsService {
       }),
       this.prisma.project.findMany({
         where: { status: 'DRAFT' },
-        take: 5,
         orderBy: { createdAt: 'desc' },
         select: { id: true, title: true, createdAt: true, author: { select: { firstName: true, lastName: true } } },
       }),
       this.prisma.news.findMany({
         where: { status: 'DRAFT' },
-        take: 5,
         orderBy: { createdAt: 'desc' },
         select: { id: true, title: true, createdAt: true, author: { select: { firstName: true, lastName: true } } },
       }),
       this.prisma.poll.findMany({
         where: { status: 'DRAFT' },
-        take: 5,
         orderBy: { createdAt: 'desc' },
         select: { id: true, title: true, createdAt: true, author: { select: { firstName: true, lastName: true } } },
       }),
       this.prisma.document.findMany({
         where: { status: 'DRAFT' },
-        take: 5,
         orderBy: { createdAt: 'desc' },
         select: { id: true, title: true, createdAt: true, author: { select: { firstName: true, lastName: true } } },
       }),
@@ -255,7 +251,7 @@ export class AnalyticsService {
           ...u,
           createdAt: u.createdAt.toISOString(),
         })),
-        pendingDrafts: allDrafts.slice(0, 5).map((d) => ({
+        pendingDrafts: allDrafts.map((d) => ({
           ...d,
           createdAt: d.createdAt.toISOString(),
         })),
