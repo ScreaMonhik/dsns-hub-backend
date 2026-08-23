@@ -170,11 +170,12 @@ model NewsComment {
 }
 
 model NewsVote {
-  voteType VoteType
-  userId   String
-  newsId   String
-  user     User     @relation(fields: [userId], references: [id])
-  news     News     @relation(fields: [newsId], references: [id], onDelete: Cascade)
+  voteType  VoteType
+  createdAt DateTime @default(now())
+  userId    String
+  newsId    String
+  user      User     @relation(fields: [userId], references: [id])
+  news      News     @relation(fields: [newsId], references: [id], onDelete: Cascade)
 
   @@id([userId, newsId])
 }
@@ -235,6 +236,7 @@ model ProjectComment {
 
 model ProjectVote {
   voteType  VoteType
+  createdAt DateTime @default(now())
   userId    String
   projectId String
   user      User     @relation(fields: [userId], references: [id])
@@ -341,10 +343,11 @@ model PollOption {
 }
 
 model PollVote {
-  userId   String
-  optionId String
-  user     User       @relation(fields: [userId], references: [id])
-  option   PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  userId    String
+  optionId  String
+  user      User       @relation(fields: [userId], references: [id])
+  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
 
   @@id([userId, optionId])
 }

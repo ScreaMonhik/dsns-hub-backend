@@ -19,6 +19,7 @@ import { UsersModule } from './users/users.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { SecurityModule } from './security/security.module';
 import { StorageModule } from './storage/storage.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -33,9 +34,9 @@ import { StorageModule } from './storage/storage.module';
       isGlobal: true,
       useFactory: async () => ({
         store: await redisStore({
+          url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
           socket: {
-            host: process.env.REDIS_HOST || 'localhost',
-            port: parseInt(process.env.REDIS_PORT || '6379', 10),
+            family: 4, // Explicitly force IPv4 to prevent ENOBUFS loops on Windows/WSL
           },
         }),
       }),
@@ -48,7 +49,10 @@ import { StorageModule } from './storage/storage.module';
     ProjectsModule, 
     PollsModule, 
     ChatModule, 
-    UsersModule, SecurityModule, StorageModule
+    UsersModule,
+    SecurityModule,
+    StorageModule,
+    AnalyticsModule
   ],
   controllers: [AppController],
   providers: [

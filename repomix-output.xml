@@ -42,6 +42,7 @@ The content is organized as follows:
 <directory_structure>
 prisma/
   schema.prisma
+  seed.ts
 src/
   auth/
     decorators/
@@ -114,6 +115,7 @@ src/
   polls/
     dto/
       create-poll.dto.ts
+      update-poll-visibility.dto.ts
       update-poll.dto.ts
       vote-poll.dto.ts
     polls.controller.spec.ts
@@ -205,6 +207,254 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path="prisma/seed.ts">
+import { PrismaClient } from '@prisma/client';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+const prisma = new PrismaClient();
+
+interface FlatDepartment {
+  id: string;
+  pid: string | null;
+  label: string;
+  hasChildren: boolean;
+  hasAccess: number;
+}
+
+// Regex patterns for technical garbage or deleted records
+const GARBAGE_PATTERNS = [
+  /ТЕСТ/i,
+  /TEST/i,
+  /АРХІВ/i,
+  /ВИДАЛЕН/i,
+  /DELETE/i,
+  /НЕ ВИКОРИСТОВУЄТЬСЯ/i,
+  /ДУБЛЬ/i,
+  /ТЕМП/i,
+  /TEMP/i,
+  /^\s*$/,
+];
+
+// Cyrillic-safe patterns WITHOUT ASCII-only '\b' boundaries
+const INTERNAL_OFFICE_PATTERNS = [
+  /відділ/i,
+  /відділення/i,
+  /сектор/i,
+  /апарат/i,
+  /бухгалтер/i,
+  /канцеляр/i,
+  /секретар/i,
+  /юрист/i,
+  /юридичн/i,
+  /прес-служб/i,
+  /штаб/i,
+  /група/i,
+  /лаборатор/i,
+  /служба\s+забезпечення/i,
+];
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isExcludedDepartment(label: string, hasAccess: number): boolean {
+  if (hasAccess !== 1) return true;
+
+  const trimmed = label.trim();
+
+  if (GARBAGE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return true;
+  }
+
+  if (INTERNAL_OFFICE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    return true;
+  }
+
+  // Filter out non-main "Управління" (keep "Головне управління" and "ГУ")
+  const lower = trimmed.toLowerCase();
+  if (lower.includes('управління') || lower.includes('управлiння')) {
+    const isMain =
+      lower.includes('головне') ||
+      lower.includes(' гу ') ||
+      lower.startsWith('гу ') ||
+      lower.endsWith(' гу') ||
+      lower === 'гу';
+
+    if (!isMain) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function normalizeLabel(rawLabel: string, parentLabel?: string): string {
+  let label = rawLabel.trim();
+
+  // 1. Remove tech indices in brackets at the end, like "(09)", "( 12 )"
+  label = label.replace(/\s*\([\d\s,-]+\)\s*$/g, '');
+
+  // 2. Strip quotes and № symbol
+  label = label.replace(/["'«»]/g, '').replace(/№\s*/g, '');
+
+  // 3. Unify hyphens/dashes between numbers and unit acronyms (e.g. "1-ДПРЗ" -> "1 ДПРЗ")
+  label = label.replace(/(\d+)\s*[-–—]\s*([А-ЯІЇЄҐа-яіїєґ]+)/gi, '$1 $2');
+  label = label.replace(/([А-ЯІЇЄҐа-яіїєґ]+)\s*[-–—]\s*(\d+)/gi, '$1 $2');
+
+  // 4. Strip parent label text if child explicitly repeats its parent full name
+  if (parentLabel && parentLabel.trim().length > 0) {
+    const cleanParent = parentLabel.replace(/["'«»]/g, '').trim();
+    if (label.toLowerCase().includes(cleanParent.toLowerCase())) {
+      const reg = new RegExp(escapeRegExp(cleanParent), 'gi');
+      label = label.replace(reg, '');
+    }
+  }
+
+  // 5. Strip redundant regional management mentions from sub-unit labels
+  if (parentLabel) {
+    label = label.replace(
+      /\s*(ГУ|ГОЛОВН(Е|ОГО)\s+УПРАВЛІНН(Я|Ю))\s+ДСНС(\s+УКРАЇНИ)?(\s+(У|В)\s+[А-ЯІЇЄҐ\s-]+ОБЛАСТ(І|Я))?/gi,
+      '',
+    );
+    label = label.replace(/\s*ДСНС\s+УКРАЇНИ/gi, '');
+  }
+
+  // 6. Clean up orphan punctuation, double spaces, and trailing symbols
+  label = label
+    .replace(/^[\s,-]+|[\s,-]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return label.length > 0 ? label : rawLabel.trim();
+}
+
+async function main() {
+  const filePath = path.join(__dirname, 'org_structure.json');
+  if (!fs.existsSync(filePath)) {
+    console.error('Error: org_structure.json file not found in prisma/ directory.');
+    return;
+  }
+
+  const rawData = fs.readFileSync(filePath, 'utf-8');
+  const parsed = JSON.parse(rawData);
+  const rawItems: FlatDepartment[] = parsed.flat || parsed;
+
+  console.log(`Original record count: ${rawItems.length}`);
+
+  // Step 1: Build initial parent lookup map for context-aware normalization
+  const rawItemMap = new Map<string, FlatDepartment>();
+  rawItems.forEach((item) => rawItemMap.set(item.id, item));
+
+  // Step 2: Filter out internal offices & garbage, normalize valid operational labels
+  const sanitizedItems: FlatDepartment[] = [];
+  const validIds = new Set<string>();
+
+  for (const item of rawItems) {
+    const parent = item.pid ? rawItemMap.get(item.pid) : undefined;
+    const parentLabel = parent?.label;
+    const cleanedText = normalizeLabel(item.label, parentLabel);
+
+    if (!isExcludedDepartment(cleanedText, item.hasAccess)) {
+      sanitizedItems.push({
+        ...item,
+        label: cleanedText,
+      });
+      validIds.add(item.id);
+    }
+  }
+
+  // Helper to re-parent operational units if their intermediate administrative parent was filtered out
+  function getNearestValidParentId(pid: string | null): string | null {
+    let currentPid = pid;
+    while (currentPid && currentPid !== '00000000-0000-0000-0000-000000000000') {
+      if (validIds.has(currentPid)) {
+        return currentPid;
+      }
+      const parent = rawItemMap.get(currentPid);
+      currentPid = parent ? parent.pid : null;
+    }
+    return null;
+  }
+
+  // Step 3: Re-parent operational units to valid higher-level ancestors
+  const validTreeItems = sanitizedItems.map((item) => {
+    const resolvedPid = getNearestValidParentId(item.pid);
+    return {
+      ...item,
+      pid: resolvedPid,
+    };
+  });
+
+  // Step 3: Deduplicate entries having identical label under the same parent
+  const uniqueItemsMap = new Map<string, FlatDepartment>();
+  for (const item of validTreeItems) {
+    const compositeKey = `${item.pid || 'root'}_${item.label.toLowerCase()}`;
+    if (!uniqueItemsMap.has(compositeKey)) {
+      uniqueItemsMap.set(compositeKey, item);
+    }
+  }
+
+  const finalItems = Array.from(uniqueItemsMap.values());
+  console.log(`Sanitized clean record count: ${finalItems.length} (Removed ${rawItems.length - finalItems.length} garbage/duplicate records)`);
+
+  // Step 4: Map dependencies and topological sort to respect foreign keys
+  const itemMap = new Map<string, FlatDepartment>();
+  finalItems.forEach((item) => itemMap.set(item.id, item));
+
+  const sorted: FlatDepartment[] = [];
+  const visited = new Set<string>();
+
+  function visit(item: FlatDepartment) {
+    if (visited.has(item.id)) return;
+    if (item.pid && itemMap.has(item.pid)) {
+      const parent = itemMap.get(item.pid);
+      if (parent) visit(parent);
+    }
+    visited.add(item.id);
+    sorted.push(item);
+  }
+
+  finalItems.forEach((item) => visit(item));
+
+  // Step 5: Unlink users first to avoid Foreign Key constraint violations
+  console.log('Unlinking users from existing departments...');
+  await prisma.user.updateMany({
+    data: { departmentId: null },
+  });
+
+  console.log('Cleaning existing department database table...');
+  await prisma.department.deleteMany();
+
+  console.log('Seeding clean organization structure...');
+  for (const item of sorted) {
+    const parentId =
+      item.pid && item.pid !== item.id && itemMap.has(item.pid)
+        ? item.pid
+        : null;
+
+    await prisma.department.create({
+      data: {
+        id: item.id,
+        name: item.label,
+        parentId,
+      },
+    });
+  }
+
+  console.log('Sanitized Org structure successfully seeded to database!');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+</file>
 
 <file path="src/auth/decorators/roles.decorator.ts">
 import { SetMetadata } from '@nestjs/common';
@@ -551,38 +801,6 @@ export class AuditInterceptor implements NestInterceptor {
 }
 </file>
 
-<file path="src/departments/dto/create-department.dto.ts">
-import { IsString, IsNotEmpty } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-
-export class CreateDepartmentDto {
-  @ApiProperty({ description: 'Назва підрозділу', example: 'ГУ ДСНС у Київській області' })
-  @IsString()
-  @IsNotEmpty()
-  name!: string;
-}
-</file>
-
-<file path="src/departments/dto/query-department.dto.ts">
-import { IsOptional, IsString } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
-
-export class QueryDepartmentDto {
-  @ApiPropertyOptional({ description: 'Пошуковий запит по назві' })
-  @IsString()
-  @IsOptional()
-  search?: string;
-
-  @ApiPropertyOptional({ description: 'Номер сторінки', example: '1' })
-  @IsOptional()
-  page?: string;
-
-  @ApiPropertyOptional({ description: 'Кількість елементів на сторінці', example: '20' })
-  @IsOptional()
-  limit?: string;
-}
-</file>
-
 <file path="src/departments/departments.controller.spec.ts">
 import { Test, TestingModule } from '@nestjs/testing';
 import { DepartmentsController } from './departments.controller';
@@ -917,45 +1135,6 @@ describe('PollsController', () => {
     expect(controller).toBeDefined();
   });
 });
-</file>
-
-<file path="src/polls/polls.cron.ts">
-import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import { PrismaService } from '../prisma/prisma.service';
-import { PollStatus } from '@prisma/client';
-
-@Injectable()
-export class PollsCronService {
-  private readonly logger = new Logger(PollsCronService.name);
-
-  constructor(private readonly prisma: PrismaService) {}
-
-  @Cron(CronExpression.EVERY_MINUTE)
-  async handleExpiredPolls() {
-    try {
-      const now = new Date();
-
-      const result = await this.prisma.poll.updateMany({
-        where: {
-          status: PollStatus.PUBLISHED,
-          expiresAt: {
-            lt: now,
-          },
-        },
-        data: {
-          status: PollStatus.ARCHIVED,
-        },
-      });
-
-      if (result.count > 0) {
-        this.logger.log(`Автоматично переведено в архів ${result.count} протермінованих опитувань.`);
-      }
-    } catch (error) {
-      this.logger.error('Помилка під час автоматичного архісування опитувань', error);
-    }
-  }
-}
 </file>
 
 <file path="src/polls/polls.service.spec.ts">
@@ -1779,6 +1958,47 @@ export class CreateGroupDto {
 }
 </file>
 
+<file path="src/departments/dto/create-department.dto.ts">
+import { IsString, IsNotEmpty, IsOptional, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class CreateDepartmentDto {
+  @ApiProperty({ description: 'Назва підрозділу', example: 'ГУ ДСНС у Київській області' })
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @ApiPropertyOptional({ description: 'ID батьківського підрозділу', format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  parentId?: string;
+}
+</file>
+
+<file path="src/departments/dto/query-department.dto.ts">
+import { IsOptional, IsString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+
+export class QueryDepartmentDto {
+  @ApiPropertyOptional({ description: 'ID батьківського підрозділу (передайте "null" для кореневих областей/органів)', example: '737306c4-560a-4f7b-b941-f582a233d5ef' })
+  @IsOptional()
+  parentId?: string;
+
+  @ApiPropertyOptional({ description: 'Пошуковий запит по назві' })
+  @IsString()
+  @IsOptional()
+  search?: string;
+
+  @ApiPropertyOptional({ description: 'Номер сторінки', example: '1' })
+  @IsOptional()
+  page?: string;
+
+  @ApiPropertyOptional({ description: 'Кількість елементів на сторінці', example: '100' })
+  @IsOptional()
+  limit?: string;
+}
+</file>
+
 <file path="src/documents/dto/create-document.dto.ts">
 import { IsString, IsNotEmpty, IsOptional, IsEnum, IsArray, IsUUID } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -1817,6 +2037,21 @@ export class CreateDocumentDto {
   @IsUUID('4', { each: true })
   @IsOptional()
   departmentIds?: string[];
+}
+</file>
+
+<file path="src/polls/dto/update-poll-visibility.dto.ts">
+import { IsInt, Min } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+
+export class UpdatePollVisibilityDto {
+  @ApiProperty({ 
+    description: 'Number of days to extend visibility of an archived poll. Pass 0 to hide it immediately from users.', 
+    example: 14 
+  })
+  @IsInt()
+  @Min(0)
+  extendDays!: number;
 }
 </file>
 
@@ -2061,86 +2296,6 @@ import { AvatarsController } from './avatars.controller';
 export class UsersModule {}
 </file>
 
-<file path=".gitignore">
-# compiled output
-/dist
-/node_modules
-/build
-
-# Logs
-logs
-*.log
-npm-debug.log*
-pnpm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# OS
-.DS_Store
-
-# Tests
-/coverage
-/.nyc_output
-
-# IDEs and editors
-/.idea
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
-
-# IDE - VSCode
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# temp directory
-.temp
-.tmp
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Diagnostic reports (https://nodejs.org/api/report.html)
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-
-/generated/prisma
-
-# ========================
-# Custom & Local Files
-# ========================
-# AI/Bot helpers and logs
-.claude-dev-helper/
-structure.txt
-
-# TypeScript incremental build cache
-*.tsbuildinfo
-
-# Local Prisma SQLite databases (just in case)
-*.db
-*.db-journal
-*.sqlite
-
-*.pdf
-*.png
-*.jpeg
-</file>
-
 <file path="src/chat/dto/manage-member.dto.ts">
 import { IsNotEmpty, IsUUID, IsBoolean, IsOptional, IsArray } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -2223,75 +2378,6 @@ export class DepartmentsController {
 }
 </file>
 
-<file path="src/departments/departments.service.ts">
-import { Injectable, ConflictException, Inject } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateDepartmentDto } from './dto/create-department.dto';
-import { QueryDepartmentDto } from './dto/query-department.dto';
-import { Prisma } from '@prisma/client';
-
-@Injectable()
-export class DepartmentsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
-  ) {}
-
-  async create(dto: CreateDepartmentDto) {
-    const exists = await this.prisma.department.findUnique({
-      where: { name: dto.name },
-    });
-
-    if (exists) {
-      throw new ConflictException('Підрозділ з такою назвою вже існує');
-    }
-
-    const department = await this.prisma.department.create({
-      data: { name: dto.name },
-    });
-
-    // Оскільки ми більше не маємо єдиного ключа (через динамічні query параметри), 
-    // для надійності скидаємо весь кеш (в реальному продакшені краще використовувати теги, якщо Redis підтримує)
-
-    return department;
-  }
-
-  async findAll(query: QueryDepartmentDto) {
-    const pageNumber = Math.max(1, Number(query.page) || 1);
-    const limitNumber = Math.max(1, Number(query.limit) || 20);
-    const skip = (pageNumber - 1) * limitNumber;
-
-    const where: Prisma.DepartmentWhereInput = {};
-    
-    if (query.search) {
-      where.name = { contains: query.search, mode: 'insensitive' };
-    }
-
-    const [data, total] = await Promise.all([
-      this.prisma.department.findMany({
-        where,
-        skip,
-        take: limitNumber,
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.department.count({ where }),
-    ]);
-
-    return {
-      data,
-      meta: {
-        total,
-        page: pageNumber,
-        lastPage: Math.ceil(total / limitNumber),
-        limit: limitNumber,
-      },
-    };
-  }
-}
-</file>
-
 <file path="src/polls/dto/create-poll.dto.ts">
 import { IsString, IsNotEmpty, IsUUID, IsArray, ArrayMinSize, IsOptional, IsEnum, IsDateString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -2350,6 +2436,48 @@ export class UpdatePollDto extends PartialType(CreatePollDto) {
 }
 </file>
 
+<file path="src/polls/polls.cron.ts">
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { PrismaService } from '../prisma/prisma.service';
+import { PollStatus } from '@prisma/client';
+
+@Injectable()
+export class PollsCronService {
+  private readonly logger = new Logger(PollsCronService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleExpiredPolls() {
+    try {
+      const now = new Date();
+      const visibleUntil = new Date(now);
+      visibleUntil.setDate(visibleUntil.getDate() + 30); // Default visibility extension: 30 days
+
+      const result = await this.prisma.poll.updateMany({
+        where: {
+          status: PollStatus.PUBLISHED,
+          expiresAt: {
+            lt: now,
+          },
+        },
+        data: {
+          status: PollStatus.ARCHIVED,
+          archivedVisibleUntil: visibleUntil,
+        },
+      });
+
+      if (result.count > 0) {
+        this.logger.log(`Автоматично переведено в архів ${result.count} протермінованих опитувань.`);
+      }
+    } catch (error) {
+      this.logger.error('Помилка під час автоматичного архісування опитувань', error);
+    }
+  }
+}
+</file>
+
 <file path="src/security/file-security.service.ts">
 import { Injectable, BadRequestException } from '@nestjs/common';
 
@@ -2400,6 +2528,87 @@ export class FileSecurityService {
 }
 </file>
 
+<file path=".gitignore">
+# compiled output
+/dist
+/node_modules
+/build
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS
+.DS_Store
+
+# Tests
+/coverage
+/.nyc_output
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# temp directory
+.temp
+.tmp
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+/generated/prisma
+
+# ========================
+# Custom & Local Files
+# ========================
+# AI/Bot helpers and logs
+.claude-dev-helper/
+structure.txt
+prisma/org_structure.json
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Local Prisma SQLite databases (just in case)
+*.db
+*.db-journal
+*.sqlite
+
+*.pdf
+*.png
+*.jpeg
+</file>
+
 <file path="tsconfig.json">
 {
   "compilerOptions": {
@@ -2425,55 +2634,6 @@ export class FileSecurityService {
     "noFallthroughCasesInSwitch": false,
     "types": ["node", "jest", "multer"]
   }
-}
-</file>
-
-<file path="src/auth/dto/auth.dto.ts">
-import { IsEmail, IsNotEmpty, IsString, MinLength, Matches } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-
-export class RegisterDto {
-  @ApiProperty({ example: 'admin@dsns.gov.ua', description: 'Службова пошта' })
-  @IsEmail({}, { message: 'Некоректний формат email' })
-  @IsNotEmpty({ message: 'Email не може бути порожнім' })
-  email!: string;
-
-  @ApiProperty({ example: 'SuperSecret1!', description: 'Пароль (мінімум 8 символів, велика та мала літера, цифра, спецсимвол)' })
-  @IsString()
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, {
-    message: 'Пароль має містити щонайменше 8 символів, одну велику літеру, одну малу літеру, одну цифру та один спеціальний символ (@$!%*?&)',
-  })
-  @IsNotEmpty()
-  password!: string;
-
-  @ApiProperty({ example: 'Іван' })
-  @IsString()
-  @IsNotEmpty({ message: 'Ім\'я не може бути порожнім' })
-  firstName!: string;
-
-  @ApiProperty({ example: 'Іванов' })
-  @IsString()
-  @IsNotEmpty({ message: 'Прізвище не може бути порожнім' })
-  lastName!: string;
-}
-
-export class LoginDto {
-  @ApiProperty({ example: 'admin@dsns.gov.ua' })
-  @IsEmail({}, { message: 'Некоректний формат email' })
-  @IsNotEmpty()
-  email!: string;
-
-  @ApiProperty({ example: 'SuperSecretPassword123' })
-  @IsString()
-  @IsNotEmpty()
-  password!: string;
-}
-
-export class RefreshTokenDto {
-  @ApiProperty({ description: 'Refresh Token' })
-  @IsString()
-  @IsNotEmpty()
-  refreshToken!: string;
 }
 </file>
 
@@ -2935,6 +3095,94 @@ export class ChatService {
         changedBy: { select: { id: true, firstName: true, lastName: true, email: true } } 
       },
     });
+  }
+}
+</file>
+
+<file path="src/departments/departments.service.ts">
+import { Injectable, ConflictException, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateDepartmentDto } from './dto/create-department.dto';
+import { QueryDepartmentDto } from './dto/query-department.dto';
+import { Prisma } from '@prisma/client';
+
+@Injectable()
+export class DepartmentsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
+
+  async create(dto: CreateDepartmentDto) {
+    const exists = await this.prisma.department.findFirst({
+      where: {
+        name: dto.name,
+        parentId: dto.parentId ?? null,
+      },
+    });
+
+    if (exists) {
+      throw new ConflictException('Підрозділ з такою назвою вже існує у даному блоці');
+    }
+
+    return this.prisma.department.create({
+      data: {
+        name: dto.name,
+        parentId: dto.parentId,
+      },
+    });
+  }
+
+  async findAll(query: QueryDepartmentDto) {
+    const pageNumber = Math.max(1, Number(query.page) || 1);
+    const limitNumber = Math.max(1, Number(query.limit) || 100);
+    const skip = (pageNumber - 1) * limitNumber;
+
+    const where: Prisma.DepartmentWhereInput = {};
+
+    if (query.parentId !== undefined) {
+      if (query.parentId === 'null' || query.parentId === '') {
+        where.parentId = null;
+      } else {
+        where.parentId = query.parentId;
+      }
+    }
+
+    if (query.search) {
+      where.name = { contains: query.search, mode: 'insensitive' };
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.department.findMany({
+        where,
+        skip,
+        take: limitNumber,
+        orderBy: { name: 'asc' },
+        include: {
+          _count: { select: { children: true } },
+        },
+      }),
+      this.prisma.department.count({ where }),
+    ]);
+
+    const mappedData = data.map((dept) => ({
+      id: dept.id,
+      name: dept.name,
+      parentId: dept.parentId,
+      hasChildren: dept._count.children > 0,
+    }));
+
+    return {
+      data: mappedData,
+      meta: {
+        total,
+        page: pageNumber,
+        lastPage: Math.ceil(total / limitNumber) || 1,
+        limit: limitNumber,
+      },
+    };
   }
 }
 </file>
@@ -3615,6 +3863,60 @@ volumes:
   pgdata:
   redisdata:
   miniodata:
+</file>
+
+<file path="src/auth/dto/auth.dto.ts">
+import { IsEmail, IsNotEmpty, IsString, MinLength, Matches, IsOptional, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class RegisterDto {
+  @ApiProperty({ example: 'admin@dsns.gov.ua', description: 'Службова пошта' })
+  @IsEmail({}, { message: 'Некоректний формат email' })
+  @IsNotEmpty({ message: 'Email не може бути порожнім' })
+  email!: string;
+
+  @ApiProperty({ example: 'SuperSecret1!', description: 'Пароль (мінімум 8 символів, велика та мала літера, цифра, спецсимвол)' })
+  @IsString()
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, {
+    message: 'Пароль має містити щонайменше 8 символів, одну велику літеру, одну малу літеру, одну цифру та один спеціальний символ (@$!%*?&)',
+  })
+  @IsNotEmpty()
+  password!: string;
+
+  @ApiProperty({ example: 'Іван' })
+  @IsString()
+  @IsNotEmpty({ message: 'Ім\'я не може бути порожнім' })
+  firstName!: string;
+
+  @ApiProperty({ example: 'Іванов' })
+  @IsString()
+  @IsNotEmpty({ message: 'Прізвище не може бути порожнім' })
+  lastName!: string;
+
+  @ApiPropertyOptional({ description: 'ID підрозділу', format: 'uuid' })
+  @IsUUID('4')
+  @IsOptional()
+  departmentId?: string;
+}
+
+export class LoginDto {
+  @ApiProperty({ example: 'admin@dsns.gov.ua' })
+  @IsEmail({}, { message: 'Некоректний формат email' })
+  @IsNotEmpty()
+  email!: string;
+
+  @ApiProperty({ example: 'SuperSecretPassword123' })
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+}
+
+export class RefreshTokenDto {
+  @ApiProperty({ description: 'Refresh Token' })
+  @IsString()
+  @IsNotEmpty()
+  refreshToken!: string;
+}
 </file>
 
 <file path="src/chat/chat.controller.ts">
@@ -4529,6 +4831,9 @@ export class UsersService {
   async getMe(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
+      include: {
+        department: { select: { id: true, name: true, parentId: true } },
+      },
     });
 
     if (!user) {
@@ -4603,6 +4908,7 @@ export class AuthService {
         passwordHash: hashedPassword,
         firstName: dto.firstName,
         lastName: dto.lastName,
+        departmentId: dto.departmentId,
       },
     });
 
@@ -4731,6 +5037,7 @@ import { PollsService } from './polls.service';
 import { CreatePollDto } from './dto/create-poll.dto';
 import { UpdatePollDto } from './dto/update-poll.dto';
 import { VotePollDto } from './dto/vote-poll.dto';
+import { UpdatePollVisibilityDto } from './dto/update-poll-visibility.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -4761,6 +5068,13 @@ export class PollsController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdatePollDto) {
     return this.pollsService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Manage visibility of an archived poll (ADMIN only)' })
+  @Roles(Role.ADMIN)
+  @Patch(':id/visibility')
+  updateVisibility(@Param('id') id: string, @Body() dto: UpdatePollVisibilityDto) {
+    return this.pollsService.updateVisibility(id, dto.extendDays);
   }
 
   @ApiOperation({ summary: 'Видалити опитування (Тільки ADMIN)' })
@@ -4863,22 +5177,35 @@ export class PollsService {
     const pageNumber = Math.max(1, Number(page) || 1);
     const limitNumber = Math.max(1, Number(limit) || 10);
 
-    const whereClause: Prisma.PollWhereInput = {};
+    const andConditions: Prisma.PollWhereInput[] = [];
 
     if (departmentId) {
-      whereClause.OR = [
-        { departments: { some: { id: departmentId } } },
-        { departments: { none: {} } },
-      ];
+      andConditions.push({
+        OR: [
+          { departments: { some: { id: departmentId } } },
+          { departments: { none: {} } },
+        ],
+      });
     }
 
     if (user.role === Role.USER) {
-      whereClause.status = PollStatus.PUBLISHED;
+      andConditions.push({
+        OR: [
+          { status: PollStatus.PUBLISHED },
+          {
+            status: PollStatus.ARCHIVED,
+            archivedVisibleUntil: { gt: new Date() },
+          },
+        ],
+      });
     } else if (status) {
-      whereClause.status = status;
+      andConditions.push({ status });
     } else {
-      whereClause.status = { not: PollStatus.ARCHIVED };
+      andConditions.push({ status: { not: PollStatus.ARCHIVED } });
     }
+
+    const whereClause: Prisma.PollWhereInput =
+      andConditions.length > 0 ? { AND: andConditions } : {};
 
     const polls = await this.prisma.poll.findMany({
       where: whereClause,
@@ -4987,8 +5314,16 @@ export class PollsService {
       throw new NotFoundException('Опитування не знайдено');
     }
 
-    if (user && user.role === Role.USER && poll.status !== PollStatus.PUBLISHED) {
-      throw new ForbiddenException('Access denied to unpublished or archived poll');
+    if (user && user.role === Role.USER) {
+      const isPublished = poll.status === PollStatus.PUBLISHED;
+      const isArchivedAndVisible =
+        poll.status === PollStatus.ARCHIVED &&
+        poll.archivedVisibleUntil &&
+        new Date(poll.archivedVisibleUntil) > new Date();
+
+      if (!isPublished && !isArchivedAndVisible) {
+        throw new ForbiddenException('Access denied to unpublished or hidden archived poll');
+      }
     }
 
     const totalVotes = poll.options.reduce((sum, opt) => sum + opt._count.votes, 0);
@@ -5059,6 +5394,37 @@ export class PollsService {
     });
 
     return this.findOne(pollId, user);
+  }
+
+  async updateVisibility(id: string, extendDays: number) {
+    const poll = await this.prisma.poll.findUnique({ where: { id } });
+    if (!poll) {
+      throw new NotFoundException('Poll not found');
+    }
+    
+    if (poll.status !== PollStatus.ARCHIVED) {
+      throw new BadRequestException('Visibility can only be changed for archived polls');
+    }
+
+    let newVisibleDate: Date | null = null;
+    if (extendDays > 0) {
+      newVisibleDate = new Date();
+      newVisibleDate.setDate(newVisibleDate.getDate() + extendDays);
+    }
+
+    return this.prisma.poll.update({
+      where: { id },
+      data: { archivedVisibleUntil: newVisibleDate },
+      include: {
+        departments: true,
+        options: {
+          orderBy: { orderIndex: 'asc' },
+          include: {
+            _count: { select: { votes: true } },
+          },
+        },
+      },
+    });
   }
 
   async update(id: string, dto: UpdatePollDto) {
@@ -5203,6 +5569,9 @@ export class PollsService {
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json"
+  },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1111.0",
@@ -5719,11 +6088,16 @@ export class NewsService {
     ]);
 
     const mappedData = articles.map((article) => {
-      const { votes, upvotesCount, downvotesCount, ...rest } = article;
+      const { votes, upvotesCount, downvotesCount, imageUrl, author, ...rest } = article;
       const currentUserVote = votes.length > 0 ? votes[0].voteType : null;
       
       return { 
         ...rest,
+        imageUrl: imageUrl ?? '',
+        author: {
+          ...author,
+          avatarUrl: author.avatarUrl ?? '',
+        },
         votes: votes,
         upvotes: upvotesCount,
         downvotes: downvotesCount,
@@ -5741,7 +6115,8 @@ export class NewsService {
       meta: {
         total,
         page,
-        lastPage: Math.ceil(total / limit),
+        lastPage: Math.ceil(total / limit) || 1,
+        limit,
       },
     };
   }
@@ -6062,6 +6437,9 @@ model User {
   refreshToken        String?  @db.Text
   createdAt           DateTime @default(now())
 
+  departmentId        String?
+  department          Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
   // Зв'язки
   news            News[]
   newsComments    NewsComment[]
@@ -6078,6 +6456,8 @@ model User {
   documents       Document[]
   systemAuditLogs SystemAuditLog[]
   apiAuditLogs    ApiAuditLog[]
+
+  @@index([departmentId])
 }
 
 model SystemAuditLog {
@@ -6107,12 +6487,19 @@ model ApiAuditLog {
 
 model Department {
   id         String      @id @default(uuid())
-  name       String      @unique
+  name       String
+  parentId   String?
+  parent     Department? @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children   Department[] @relation("DepartmentTree")
+
+  users      User[]
   documents  Document[]
   polls      Poll[]
   chatGroups ChatGroup[]
   news       News[]
   projects   Project[]
+
+  @@index([parentId])
 }
 
 model News {
@@ -6293,13 +6680,14 @@ model MessagesAuditLog {
 }
 
 model Poll {
-  id          String     @id @default(uuid())
-  title       String
-  description String?    @db.Text
-  status      PollStatus @default(PUBLISHED)
-  expiresAt   DateTime?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id                   String     @id @default(uuid())
+  title                String
+  description          String?    @db.Text
+  status               PollStatus @default(PUBLISHED)
+  expiresAt            DateTime?
+  archivedVisibleUntil DateTime?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
 
   authorId     String?
   author       User?      @relation(fields: [authorId], references: [id])
