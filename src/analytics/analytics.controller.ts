@@ -2,6 +2,7 @@ import { Controller, Get, UseGuards, Query, Res } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiProduces } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { ExportAnalyticsDto } from './dto/export-analytics.dto';
+import { QueryDashboardDto } from './dto/query-dashboard.dto';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -18,8 +19,8 @@ export class AnalyticsController {
   @ApiOperation({ summary: 'Get aggregated dashboard statistics (ADMIN only)' })
   @Roles(Role.ADMIN)
   @Get('dashboard')
-  async getDashboard() {
-    return this.analyticsService.getDashboardData();
+  async getDashboard(@Query() query: QueryDashboardDto) {
+    return this.analyticsService.getDashboardData(query);
   }
 
   @ApiOperation({ summary: 'Export analytics report to PDF or CSV (ADMIN only)' })

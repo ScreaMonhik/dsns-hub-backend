@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExportAnalyticsDto, ExportFormat } from './dto/export-analytics.dto';
+import { QueryDashboardDto } from './dto/query-dashboard.dto';
 import { Readable } from 'stream';
 import PDFDocument from 'pdfkit';
 
@@ -32,6 +33,8 @@ export interface DashboardAnalyticsResponse {
     newUsers: number;
     newProjects: number;
     votes: number;
+    engagements: number;
+    comments: number;
   }>;
   recentActivity: {
         latestUsers: Array<{
@@ -55,7 +58,7 @@ export interface DashboardAnalyticsResponse {
 export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getDashboardData(): Promise<DashboardAnalyticsResponse> {
+  async getDashboardData(query?: QueryDashboardDto): Promise<DashboardAnalyticsResponse> {
     // 1. Fetch Aggregated Summary Data concurrently
     const [
       userStats,
@@ -105,34 +108,82 @@ export class AnalyticsService {
       }),
     ]);
 
-    // 2. Process Activity Chart (last 14 days)
-    const fourteenDaysAgo = new Date();
-    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 13);
-    fourteenDaysAgo.setHours(0, 0, 0, 0);
+    // 2. Process Activity Chart Data
+    const endDate = query?.endDate ? new Date(query.endDate) : new Date();
+    const startDate = query?.startDate ? new Date(query.startDate) : new Date(endDate.getTime() - 13 * 24 * 60 * 60 * 1000);
 
-    const [recentUsers, recentProjects, recentProjectVotes, recentNewsVotes, recentPollVotes] = await Promise.all([
-      this.prisma.user.findMany({ where: { createdAt: { gte: fourteenDaysAgo } }, select: { createdAt: true } }),
-      this.prisma.project.findMany({ where: { createdAt: { gte: fourteenDaysAgo } }, select: { createdAt: true } }),
-      this.prisma.projectVote.findMany({ where: { createdAt: { gte: fourteenDaysAgo } }, select: { createdAt: true } }),
-      this.prisma.newsVote.findMany({ where: { createdAt: { gte: fourteenDaysAgo } }, select: { createdAt: true } }),
-      this.prisma.pollVote.findMany({ where: { createdAt: { gte: fourteenDaysAgo } }, select: { createdAt: true } }),
+    // Set defaults ONLY if dates were not provided by frontend (to avoid overriding frontend's precise ISO timezone)
+    if (!query?.endDate) endDate.setUTCHours(23, 59, 59, 999);
+    if (!query?.startDate) startDate.setUTCHours(0, 0, 0, 0);
+
+    if (startDate > endDate) {
+      throw new BadRequestException('startDate не може бути більшим за endDate');
+    }
+
+    const diffDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+    const isMonthly = diffDays > 60; // Group by month if the range is greater than ~2 months
+
+    const [
+      recentUsers, 
+      recentProjects, 
+      recentProjectVotes, 
+      recentNewsVotes, 
+      recentPollVotes,
+      recentProjectComments,
+      recentNewsComments,
+    ] = await Promise.all([
+      this.prisma.user.findMany({ where: { createdAt: { gte: startDate, lte: endDate } }, select: { createdAt: true } }),
+      this.prisma.project.findMany({ where: { createdAt: { gte: startDate, lte: endDate } }, select: { createdAt: true } }),
+      this.prisma.projectVote.findMany({ where: { createdAt: { gte: startDate, lte: endDate } }, select: { createdAt: true } }),
+      this.prisma.newsVote.findMany({ where: { createdAt: { gte: startDate, lte: endDate } }, select: { createdAt: true } }),
+      this.prisma.pollVote.findMany({ where: { createdAt: { gte: startDate, lte: endDate } }, select: { createdAt: true } }),
+      this.prisma.projectComment.findMany({ where: { createdAt: { gte: startDate, lte: endDate } }, select: { createdAt: true } }),
+      this.prisma.newsComment.findMany({ where: { createdAt: { gte: startDate, lte: endDate } }, select: { createdAt: true } }),
     ]);
 
-    const activityChart = Array.from({ length: 14 }).map((_, index) => {
-      const targetDate = new Date(fourteenDaysAgo);
-      targetDate.setDate(targetDate.getDate() + index);
-      const dateStr = targetDate.toISOString().split('T')[0];
+    const buckets: string[] = [];
+    
+    if (isMonthly) {
+      const currentMonth = new Date(startDate);
+      currentMonth.setUTCDate(1);
+      currentMonth.setUTCHours(12, 0, 0, 0); // Align to noon UTC to safely increment months
+      
+      const endMonth = new Date(endDate);
+      endMonth.setUTCDate(1);
+      endMonth.setUTCHours(12, 0, 0, 0);
+      
+      while (currentMonth <= endMonth) {
+        buckets.push(currentMonth.toISOString().substring(0, 7)); // Output format: 'YYYY-MM'
+        currentMonth.setUTCMonth(currentMonth.getUTCMonth() + 1);
+      }
+    } else {
+      const currentDate = new Date(startDate);
+      currentDate.setUTCHours(12, 0, 0, 0); // Start at noon UTC to prevent daylight saving boundary shifts
+      
+      const stopDate = new Date(endDate);
+      stopDate.setUTCHours(12, 0, 0, 0);
+      
+      while (currentDate <= stopDate) {
+        buckets.push(currentDate.toISOString().substring(0, 10)); // Output format: 'YYYY-MM-DD'
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+      }
+    }
 
-      const filterByDate = (item: { createdAt: Date }) => item.createdAt.toISOString().split('T')[0] === dateStr;
+    const activityChart = buckets.map(bucketStr => {
+      // Using .startsWith handles both 'YYYY-MM' and 'YYYY-MM-DD' correctly
+      const filterByBucket = (item: { createdAt: Date }) => item.createdAt.toISOString().startsWith(bucketStr);
 
       return {
-        date: dateStr,
-        newUsers: recentUsers.filter(filterByDate).length,
-        newProjects: recentProjects.filter(filterByDate).length,
-        votes: 
-          recentProjectVotes.filter(filterByDate).length +
-          recentNewsVotes.filter(filterByDate).length +
-          recentPollVotes.filter(filterByDate).length,
+        date: bucketStr,
+        newUsers: recentUsers.filter(filterByBucket).length,
+        newProjects: recentProjects.filter(filterByBucket).length,
+        votes: recentPollVotes.filter(filterByBucket).length,
+        engagements: 
+          recentProjectVotes.filter(filterByBucket).length +
+          recentNewsVotes.filter(filterByBucket).length,
+        comments:
+          recentProjectComments.filter(filterByBucket).length +
+          recentNewsComments.filter(filterByBucket).length,
       };
     });
 
