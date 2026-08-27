@@ -8,7 +8,7 @@ import PDFDocument from 'pdfkit';
 export interface AnalyticsSummary {
   users: { total: number; active: number; blocked: number; admins: number };
   projects: { total: number; draft: number; published: number; archived: number };
-  news: { total: number; draft: number; published: number; archived: number };
+  news: { total: number; draft: number; scheduled: number; published: number; archived: number };
   polls: { total: number; active: number; archived: number; totalVotes: number };
 }
 
@@ -25,7 +25,7 @@ export interface DashboardAnalyticsResponse {
   summary: {
     users: { total: number; active: number; blocked: number; admins: number };
     projects: { total: number; draft: number; published: number; archived: number };
-    news: { total: number; draft: number; published: number; archived: number };
+    news: { total: number; draft: number; scheduled: number; published: number; archived: number };
     polls: { total: number; active: number; archived: number; totalVotes: number };
   };
   activityChart: Array<{
@@ -235,6 +235,7 @@ export class AnalyticsService {
         news: {
           total: newsStats.reduce((acc, curr) => acc + curr._count.id, 0),
           draft: newsStats.find((s) => s.status === 'DRAFT')?._count.id || 0,
+          scheduled: newsStats.find((s) => s.status === 'SCHEDULED')?._count.id || 0,
           published: newsStats.find((s) => s.status === 'PUBLISHED')?._count.id || 0,
           archived: newsStats.find((s) => s.status === 'ARCHIVED')?._count.id || 0,
         },
@@ -303,11 +304,12 @@ export class AnalyticsService {
         archived: projectStats.find((s) => s.status === 'ARCHIVED')?._count.id || 0,
       },
       news: {
-        total: newsStats.reduce((acc, curr) => acc + curr._count.id, 0),
-        draft: newsStats.find((s) => s.status === 'DRAFT')?._count.id || 0,
-        published: newsStats.find((s) => s.status === 'PUBLISHED')?._count.id || 0,
-        archived: newsStats.find((s) => s.status === 'ARCHIVED')?._count.id || 0,
-      },
+          total: newsStats.reduce((acc, curr) => acc + curr._count.id, 0),
+          draft: newsStats.find((s) => s.status === 'DRAFT')?._count.id || 0,
+          scheduled: newsStats.find((s) => s.status === 'SCHEDULED')?._count.id || 0,
+          published: newsStats.find((s) => s.status === 'PUBLISHED')?._count.id || 0,
+          archived: newsStats.find((s) => s.status === 'ARCHIVED')?._count.id || 0,
+        },
       polls: {
         total: pollStats.reduce((acc, curr) => acc + curr._count.id, 0),
         active: pollStats.find((s) => s.status === 'PUBLISHED')?._count.id || 0,
@@ -363,7 +365,7 @@ export class AnalyticsService {
     csvRows.push('SUMMARY');
     csvRows.push(`Users;Total:${summary.users.total};Active:${summary.users.active};Blocked:${summary.users.blocked};Admins:${summary.users.admins}`);
     csvRows.push(`Projects;Total:${summary.projects.total};Drafts:${summary.projects.draft};Published:${summary.projects.published};Archived:${summary.projects.archived}`);
-    csvRows.push(`News;Total:${summary.news.total};Drafts:${summary.news.draft};Published:${summary.news.published};Archived:${summary.news.archived}`);
+    csvRows.push(`News;Total:${summary.news.total};Drafts:${summary.news.draft};Scheduled:${summary.news.scheduled};Published:${summary.news.published};Archived:${summary.news.archived}`);
     csvRows.push(`Polls;Total:${summary.polls.total};Active:${summary.polls.active};Archived:${summary.polls.archived};TotalVotes:${summary.polls.totalVotes}`);
     csvRows.push('');
     csvRows.push('DYNAMICS (DAILY)');
@@ -464,7 +466,7 @@ export class AnalyticsService {
     const sumY = doc.y;
     drawSummaryBox('Users', `Total: ${summary.users.total}\nActive: ${summary.users.active}\nAdmins: ${summary.users.admins}`, 50, sumY);
     drawSummaryBox('Projects', `Total: ${summary.projects.total}\nDrafts: ${summary.projects.draft}\nPublished: ${summary.projects.published}`, 170, sumY);
-    drawSummaryBox('News', `Total: ${summary.news.total}\nDrafts: ${summary.news.draft}\nPublished: ${summary.news.published}`, 290, sumY);
+    drawSummaryBox('News', `Total: ${summary.news.total}\nDrafts: ${summary.news.draft}\nSched: ${summary.news.scheduled}\nPub: ${summary.news.published}`, 290, sumY);
     drawSummaryBox('Polls', `Total: ${summary.polls.total}\nActive: ${summary.polls.active}\nVotes: ${summary.polls.totalVotes}`, 410, sumY);
 
     doc.y = sumY + 80;

@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, IsArray, IsDateString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { NewsStatus } from '@prisma/client';
@@ -32,6 +32,11 @@ export class CreateNewsDto {
   @IsEnum(NewsStatus)
   @IsOptional()
   status?: NewsStatus;
+
+  @ApiPropertyOptional({ description: 'Дата та час запланованої публікації (ISO)', example: '2026-10-15T12:00:00Z' })
+  @IsDateString()
+  @IsOptional()
+  publishedAt?: string;
 
   @ApiPropertyOptional({ description: 'ID категорії', format: 'uuid' })
   @IsUUID('4')

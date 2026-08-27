@@ -61,6 +61,7 @@ enum BroadcastStatus {
 
 enum NewsStatus {
   DRAFT
+  SCHEDULED
   PUBLISHED
   ARCHIVED
 }
@@ -192,6 +193,7 @@ model News {
   content      String        @db.Text
   imageUrl     String?
   status         NewsStatus    @default(PUBLISHED)
+  publishedAt    DateTime?
   upvotesCount   Int           @default(0)
   downvotesCount Int           @default(0)
   categoryId     String?

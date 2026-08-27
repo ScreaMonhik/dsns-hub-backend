@@ -22,6 +22,7 @@ export class NewsService {
         content: dto.content,
         imageUrl: dto.imageUrl,
         status: dto.status,
+        publishedAt: dto.publishedAt ? new Date(dto.publishedAt) : undefined,
         categoryId: dto.categoryId,
         departments: dto.departmentIds?.length ? {
           connect: dto.departmentIds.map((id) => ({ id }))
@@ -56,6 +57,10 @@ export class NewsService {
       }
     } else {
       where.status = NewsStatus.PUBLISHED;
+      where.OR = [
+        { publishedAt: null },
+        { publishedAt: { lte: new Date() } }
+      ];
     }
 
     const validSortFields = [
@@ -165,8 +170,13 @@ export class NewsService {
 
     if (!news) throw new NotFoundException('Новину не знайдено');
 
-    if (user && user.role === Role.USER && news.status !== NewsStatus.PUBLISHED) {
-      throw new ForbiddenException('Access denied to unpublished or archived news');
+    if (user && user.role !== Role.ADMIN && user.role !== Role.SUPER_ADMIN) {
+      if (news.status !== NewsStatus.PUBLISHED) {
+        throw new ForbiddenException('Access denied to unpublished or archived news');
+      }
+      if (news.publishedAt && news.publishedAt > new Date()) {
+        throw new ForbiddenException('News is not published yet');
+      }
     }
 
     const { votes, upvotesCount, downvotesCount, ...rest } = news;
@@ -184,7 +194,7 @@ export class NewsService {
   async update(id: string, dto: UpdateNewsDto, userId: string) {
     const oldNews = await this.findOne(id); // Validation check and old data retrieval
 
-    const { departmentIds, ...restData } = dto;
+    const { departmentIds, publishedAt, ...restData } = dto;
 
     return this.prisma.$transaction(async (tx) => {
       await tx.systemAuditLog.create({
@@ -202,6 +212,7 @@ export class NewsService {
         where: { id },
         data: {
           ...restData,
+          ...(publishedAt !== undefined && { publishedAt: publishedAt ? new Date(publishedAt) : null }),
           ...(departmentIds !== undefined && {
             departments: {
               set: departmentIds.map((deptId) => ({ id: deptId })),
