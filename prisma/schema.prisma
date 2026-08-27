@@ -38,6 +38,25 @@ enum AuditLogResource {
   POLL
   DEPARTMENT
   CHAT
+  EMERGENCY_BROADCAST
+}
+
+enum BroadcastSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum BroadcastSound {
+  DEFAULT
+  SIREN
+  ALERT
+}
+
+enum BroadcastStatus {
+  SENT
+  FAILED
+  PENDING
 }
 
 enum NewsStatus {
@@ -104,6 +123,7 @@ model User {
   systemAuditLogs SystemAuditLog[]
   apiAuditLogs    ApiAuditLog[]
   auditLogsRef    AuditLog[]
+  emergencyBroadcasts EmergencyBroadcast[]
 
   @@index([departmentId])
 }
@@ -161,6 +181,7 @@ model Department {
   chatGroups ChatGroup[]
   news       News[]
   projects   Project[]
+  emergencyBroadcasts EmergencyBroadcast[]
 
   @@index([parentId])
 }
@@ -384,4 +405,23 @@ model PollVote {
   option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
 
   @@id([userId, optionId])
+}
+
+model EmergencyBroadcast {
+  id             String            @id @default(uuid())
+  title          String
+  body           String            @db.Text
+  severity       BroadcastSeverity @default(INFO)
+  soundPreset    BroadcastSound    @default(DEFAULT)
+  status         BroadcastStatus   @default(PENDING)
+  recipientCount Int               @default(0)
+  createdAt      DateTime          @default(now())
+
+  authorId       String
+  author         User              @relation(fields: [authorId], references: [id])
+
+  departments    Department[]
+
+  @@index([severity, createdAt])
+  @@index([authorId])
 }

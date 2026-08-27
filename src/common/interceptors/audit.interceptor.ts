@@ -43,6 +43,7 @@ export class AuditInterceptor implements NestInterceptor {
           else if (url.includes('/departments')) resource = AuditLogResource.DEPARTMENT;
           else if (url.includes('/chat')) resource = AuditLogResource.CHAT;
           else if (url.includes('/users') || url.includes('/auth')) resource = AuditLogResource.USER;
+          else if (url.includes('/emergency-broadcasts')) resource = AuditLogResource.EMERGENCY_BROADCAST;
 
           if (action && resource) {
             // For login, the user ID is in the response body. For others, it's in the JWT token (req.user)

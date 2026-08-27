@@ -21,6 +21,7 @@ import { SecurityModule } from './security/security.module';
 import { StorageModule } from './storage/storage.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { EmergencyBroadcastsModule } from './emergency-broadcasts/emergency-broadcasts.module';
 
 @Module({
   imports: [
@@ -54,7 +55,8 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
     SecurityModule,
     StorageModule,
     AnalyticsModule,
-    AuditLogsModule
+    AuditLogsModule,
+    EmergencyBroadcastsModule
   ],
   controllers: [AppController],
   providers: [
