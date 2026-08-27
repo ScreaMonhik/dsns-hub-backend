@@ -38,14 +38,14 @@ export class NewsController {
     private readonly storageService: StorageService,
   ) {}
 
-  @ApiOperation({ summary: 'Створити статтю новин (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Створити статтю новин (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post()
   create(@Req() req: RequestWithUser, @Body() createNewsDto: CreateNewsDto) {
     return this.newsService.create(req.user.sub, createNewsDto);
   }
 
-  @ApiOperation({ summary: 'Завантажити зображення або відео для новин/редактора (Тільки ADMIN)' })
+  @ApiOperation({ summary: 'Завантажити зображення або відео для новин/редактора (ADMIN, SUPER_ADMIN)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -54,7 +54,7 @@ export class NewsController {
       required: ['file'],
     },
   })
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -164,29 +164,29 @@ export class NewsController {
     return this.newsService.findAllCategories();
   }
 
-  @ApiOperation({ summary: 'Створити нову категорію новин (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Створити нову категорію новин (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post('categories')
   createCategory(@Body() dto: CreateCategoryDto) {
     return this.newsService.createCategory(dto);
   }
 
-  @ApiOperation({ summary: 'Оновити порядок категорій новин (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Оновити порядок категорій новин (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('categories/reorder')
-  reorderCategories(@Body() dto: ReorderCategoriesDto) { // Не забудьте імпортувати ReorderCategoriesDto
+  reorderCategories(@Body() dto: ReorderCategoriesDto) {
     return this.newsService.reorderCategories(dto.categoryIds);
   }
 
-  @ApiOperation({ summary: 'Редагувати назву категорії новин (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Редагувати назву категорії новин (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch('categories/:id')
   updateCategory(@Param('id') id: string, @Body() dto: UpdateCategoryDto) {
     return this.newsService.updateCategory(id, dto);
   }
 
-  @ApiOperation({ summary: 'Видалити категорію новин (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Видалити категорію новин (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete('categories/:id')
   removeCategory(@Param('id') id: string) {
     return this.newsService.removeCategory(id);
@@ -198,15 +198,15 @@ export class NewsController {
     return this.newsService.findOne(id, req.user);
   }
 
-  @ApiOperation({ summary: 'Редагувати новину (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Редагувати новину (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateNewsDto, @Req() req: RequestWithUser) {
     return this.newsService.update(id, dto, req.user.sub);
   }
 
-  @ApiOperation({ summary: 'Видалити новину (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Видалити новину (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(':id')
   remove(@Param('id') id: string, @Req() req: RequestWithUser) {
     return this.newsService.remove(id, req.user.sub);
@@ -228,8 +228,8 @@ export class NewsController {
     return this.newsService.findComments(id, req.user);
   }
 
-  @ApiOperation({ summary: 'Видалити коментар адміністратором (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Видалити коментар адміністратором (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(':newsId/comments/:commentId')
   removeComment(
     @Param('newsId') newsId: string,

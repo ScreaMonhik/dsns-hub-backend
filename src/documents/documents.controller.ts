@@ -43,7 +43,7 @@ export class DocumentsController {
     private readonly storageService: StorageService,
   ) {}
 
-  @ApiOperation({ summary: 'Завантажити та створити документ у форматі PDF (Тільки ADMIN)' })
+  @ApiOperation({ summary: 'Завантажити та створити документ у форматі PDF (ADMIN, SUPER_ADMIN)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -58,7 +58,7 @@ export class DocumentsController {
       required: ['title', 'file'],
     },
   })
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
@@ -118,42 +118,42 @@ export class DocumentsController {
     return this.documentsService.findOne(id, req.user);
   }
 
-  @ApiOperation({ summary: 'Редагувати документ (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Редагувати документ (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateDocumentDto) {
     return this.documentsService.update(id, dto);
   }
 
-  @ApiOperation({ summary: 'Опублікувати документ (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Опублікувати документ (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/publish')
   publish(@Param('id') id: string) {
     return this.documentsService.publish(id);
   }
 
-  @ApiOperation({ summary: 'Перемістити документ в архів (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Перемістити документ в архів (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/archive')
   archive(@Param('id') id: string) {
     return this.documentsService.archive(id);
   }
 
-  @ApiOperation({ summary: 'Дістати документ з архіва -> надає статус DRAFT (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Дістати документ з архіва -> надає статус DRAFT (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/unarchive')
   unarchive(@Param('id') id: string) {
     return this.documentsService.unarchive(id);
   }
 
-  @ApiOperation({ summary: 'Видалити документ (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Видалити документ (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.documentsService.remove(id);
   }
 
-  @ApiOperation({ summary: 'Замінити PDF файл документа (Тільки ADMIN)' })
+  @ApiOperation({ summary: 'Замінити PDF файл документа (ADMIN, SUPER_ADMIN)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -164,7 +164,7 @@ export class DocumentsController {
       required: ['file'],
     },
   })
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/file')
   @UseInterceptors(
     FileInterceptor('file', {

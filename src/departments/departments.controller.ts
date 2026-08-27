@@ -16,8 +16,8 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
-  @ApiOperation({ summary: 'Створити новий підрозділ (тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Створити новий підрозділ (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post()
   create(@Body() dto: CreateDepartmentDto) {
     return this.departmentsService.create(dto);

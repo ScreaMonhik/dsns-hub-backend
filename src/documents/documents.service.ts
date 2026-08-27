@@ -55,10 +55,12 @@ export class DocumentsService {
 
     const where: Prisma.DocumentWhereInput = {};
 
-    if (user.role === Role.USER) {
+    if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) {
+      if (query.status) {
+        where.status = query.status;
+      }
+    } else {
       where.status = DocumentStatus.PUBLISHED;
-    } else if (query.status) {
-      where.status = query.status;
     }
 
     if (query.departmentId) {
@@ -113,7 +115,7 @@ export class DocumentsService {
       throw new NotFoundException('Document not found');
     }
 
-    if (user.role === Role.USER && document.status !== DocumentStatus.PUBLISHED) {
+    if (user.role !== Role.ADMIN && user.role !== Role.SUPER_ADMIN && document.status !== DocumentStatus.PUBLISHED) {
       throw new ForbiddenException('Access denied to unpublished or archived document');
     }
 

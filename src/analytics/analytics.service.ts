@@ -294,7 +294,7 @@ export class AnalyticsService {
         total: userStats.reduce((acc, curr) => acc + curr._count.id, 0),
         active: userStats.filter((s) => s.isActive).reduce((acc, curr) => acc + curr._count.id, 0),
         blocked: userStats.filter((s) => !s.isActive).reduce((acc, curr) => acc + curr._count.id, 0),
-        admins: userStats.filter((s) => s.role === 'ADMIN').reduce((acc, curr) => acc + curr._count.id, 0),
+        admins: userStats.filter((s) => s.role === 'ADMIN' || s.role === 'SUPER_ADMIN').reduce((acc, curr) => acc + curr._count.id, 0),
       },
       projects: {
         total: projectStats.reduce((acc, curr) => acc + curr._count.id, 0),

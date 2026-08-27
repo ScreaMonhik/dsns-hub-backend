@@ -33,8 +33,8 @@ export class ChatController {
     return this.chatService.createGroup(req.user.sub, dto);
   }
 
-@ApiOperation({ summary: 'Отримати список всіх груп (Тільки для ADMIN)' })
-  @Roles(Role.ADMIN)
+@ApiOperation({ summary: 'Отримати список всіх груп (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('groups/all')
   getAllGroups() {
     return this.chatService.getAllGroups();
@@ -134,8 +134,8 @@ export class ChatController {
     return this.chatService.reorderPinnedGroups(req.user.sub, dto.groupIds);
   }
 
-  @ApiOperation({ summary: 'Отримати аудит-лог повідомлень (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Отримати аудит-лог повідомлень (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('audit-logs')
   getAuditLogs(
     @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,

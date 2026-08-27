@@ -8,6 +8,7 @@ datasource db {
 }
 
 enum Role {
+  SUPER_ADMIN
   ADMIN
   USER
 }
@@ -20,6 +21,23 @@ enum VoteType {
 enum AuditAction {
   UPDATED
   DELETED
+}
+
+enum AuditLogAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+}
+
+enum AuditLogResource {
+  USER
+  NEWS
+  PROJECT
+  DOCUMENT
+  POLL
+  DEPARTMENT
+  CHAT
 }
 
 enum NewsStatus {
@@ -85,8 +103,24 @@ model User {
   documents       Document[]
   systemAuditLogs SystemAuditLog[]
   apiAuditLogs    ApiAuditLog[]
+  auditLogsRef    AuditLog[]
 
   @@index([departmentId])
+}
+
+model AuditLog {
+  id        String           @id @default(uuid())
+  action    AuditLogAction
+  resource  AuditLogResource
+  details   Json?
+  ipAddress String?
+  createdAt DateTime         @default(now())
+
+  userId    String?
+  user      User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([action, resource, createdAt])
+  @@index([userId])
 }
 
 model SystemAuditLog {

@@ -22,29 +22,29 @@ interface RequestWithUser extends Request {
 export class PollsController {
   constructor(private readonly pollsService: PollsService) {}
 
-  @ApiOperation({ summary: 'Створити опитування (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Створити опитування (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post()
   create(@Req() req: RequestWithUser, @Body() dto: CreatePollDto) {
     return this.pollsService.create(req.user.sub, dto);
   }
 
-  @ApiOperation({ summary: 'Редагувати опитування (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Редагувати опитування (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdatePollDto) {
     return this.pollsService.update(id, dto);
   }
 
-  @ApiOperation({ summary: 'Manage visibility of an archived poll (ADMIN only)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Manage visibility of an archived poll (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/visibility')
   updateVisibility(@Param('id') id: string, @Body() dto: UpdatePollVisibilityDto) {
     return this.pollsService.updateVisibility(id, dto.extendDays);
   }
 
-  @ApiOperation({ summary: 'Видалити опитування (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Видалити опитування (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.pollsService.remove(id);

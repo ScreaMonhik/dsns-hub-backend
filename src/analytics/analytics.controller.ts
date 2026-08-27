@@ -16,16 +16,16 @@ import { Role } from '@prisma/client';
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
-  @ApiOperation({ summary: 'Get aggregated dashboard statistics (ADMIN only)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Get aggregated dashboard statistics (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('dashboard')
   async getDashboard(@Query() query: QueryDashboardDto) {
     return this.analyticsService.getDashboardData(query);
   }
 
-  @ApiOperation({ summary: 'Export analytics report to PDF or CSV (ADMIN only)' })
+  @ApiOperation({ summary: 'Export analytics report to PDF or CSV (ADMIN, SUPER_ADMIN)' })
   @ApiProduces('application/pdf', 'text/csv')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get('export')
   async exportAnalytics(
     @Query() query: ExportAnalyticsDto,

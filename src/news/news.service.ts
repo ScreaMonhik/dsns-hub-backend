@@ -48,12 +48,14 @@ export class NewsService {
       ...(departmentId && { departments: { some: { id: departmentId } } }),
     };
 
-    if (user.role === Role.USER) {
-      where.status = NewsStatus.PUBLISHED;
-    } else if (status) {
-      where.status = status;
+    if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) {
+      if (status) {
+        where.status = status;
+      } else {
+        where.status = { not: NewsStatus.ARCHIVED };
+      }
     } else {
-      where.status = { not: NewsStatus.ARCHIVED };
+      where.status = NewsStatus.PUBLISHED;
     }
 
     const validSortFields = [

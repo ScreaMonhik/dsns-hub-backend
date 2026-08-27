@@ -20,6 +20,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { SecurityModule } from './security/security.module';
 import { StorageModule } from './storage/storage.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
 
 @Module({
   imports: [
@@ -52,7 +53,8 @@ import { AnalyticsModule } from './analytics/analytics.module';
     UsersModule,
     SecurityModule,
     StorageModule,
-    AnalyticsModule
+    AnalyticsModule,
+    AuditLogsModule
   ],
   controllers: [AppController],
   providers: [

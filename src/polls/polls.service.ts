@@ -69,7 +69,13 @@ export class PollsService {
       });
     }
 
-    if (user.role === Role.USER) {
+    if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) {
+      if (status) {
+        andConditions.push({ status });
+      } else {
+        andConditions.push({ status: { not: PollStatus.ARCHIVED } });
+      }
+    } else {
       andConditions.push({
         OR: [
           { status: PollStatus.PUBLISHED },
@@ -79,10 +85,6 @@ export class PollsService {
           },
         ],
       });
-    } else if (status) {
-      andConditions.push({ status });
-    } else {
-      andConditions.push({ status: { not: PollStatus.ARCHIVED } });
     }
 
     const whereClause: Prisma.PollWhereInput =
@@ -195,7 +197,7 @@ export class PollsService {
       throw new NotFoundException('Опитування не знайдено');
     }
 
-    if (user && user.role === Role.USER) {
+    if (user && user.role !== Role.ADMIN && user.role !== Role.SUPER_ADMIN) {
       const isPublished = poll.status === PollStatus.PUBLISHED;
       const isArchivedAndVisible =
         poll.status === PollStatus.ARCHIVED &&

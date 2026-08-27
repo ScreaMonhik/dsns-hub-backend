@@ -45,7 +45,7 @@ export class ProjectsController {
     private readonly storageService: StorageService,
   ) {}
 
-  @ApiOperation({ summary: 'Створити новий проєкт/ініціативу з PDF файлом (Тільки ADMIN)' })
+  @ApiOperation({ summary: 'Створити новий проєкт/ініціативу з PDF файлом (ADMIN, SUPER_ADMIN)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -60,7 +60,7 @@ export class ProjectsController {
       required: ['title', 'description', 'file'],
     },
   })
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post()
   @UseInterceptors(
     FileInterceptor('file', {
@@ -117,43 +117,43 @@ export class ProjectsController {
     return this.projectsService.findOne(id, req.user);
   }
 
-  @ApiOperation({ summary: 'Редагувати проєкт (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Редагувати проєкт (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateProjectDto, @Req() req: RequestWithUser) {
     return this.projectsService.update(id, dto, req.user.sub);
   }
 
-  @ApiOperation({ summary: 'Опублікувати проєкт (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Опублікувати проєкт (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/publish')
   publish(@Param('id') id: string) {
     return this.projectsService.publish(id);
   }
 
-  @ApiOperation({ summary: 'Перемістити проєкт в архів (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Перемістити проєкт в архів (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/archive')
   archive(@Param('id') id: string) {
     return this.projectsService.archive(id);
   }
 
-  @ApiOperation({ summary: 'Дістати проєкт з архіву -> отримує статус DRAFT (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Дістати проєкт з архіву -> отримує статус DRAFT (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/unarchive')
   unarchive(@Param('id') id: string) {
     return this.projectsService.unarchive(id);
   }
 
-  @ApiOperation({ summary: 'Видалити проєкт (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Видалити проєкт (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(':id')
   remove(@Param('id') id: string, @Req() req: RequestWithUser) {
     return this.projectsService.remove(id, req.user.sub);
   }
 
-  @ApiOperation({ summary: 'Видалити коментар проєкту (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Видалити коментар проєкту (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(':projectId/comments/:commentId')
   removeComment(
     @Param('projectId') projectId: string,
@@ -183,7 +183,7 @@ export class ProjectsController {
     return this.projectsService.vote(id, req.user.sub, dto.voteType, req.user);
   }
 
-  @ApiOperation({ summary: 'Замінити PDF файл проєкту (Тільки ADMIN)' })
+  @ApiOperation({ summary: 'Замінити PDF файл проєкту (ADMIN, SUPER_ADMIN)' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -194,7 +194,7 @@ export class ProjectsController {
       required: ['file'],
     },
   })
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id/file')
   @UseInterceptors(
     FileInterceptor('file', {

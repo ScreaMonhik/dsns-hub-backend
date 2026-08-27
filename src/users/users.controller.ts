@@ -43,8 +43,8 @@ interface RequestWithUser extends Request {
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @ApiOperation({ summary: 'Отримати список користувачів з пагінацією та пошуком (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Отримати список користувачів з пагінацією та пошуком (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Get()
   findAll(
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
@@ -77,22 +77,22 @@ export class UsersController {
     return this.usersService.updateAvatar(req.user.sub, file);
   }
 
-  @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
     return this.usersService.update(id, dto);
   }
 
-  @ApiOperation({ summary: 'Повністю видалити користувача з бази даних (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Повністю видалити користувача з бази даних (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.usersService.remove(id);
   }
 
-  @ApiOperation({ summary: 'Скинути пароль користувача вручну (Тільки ADMIN)' })
-  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Скинути пароль користувача вручну (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post(':id/reset-password')
   resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
     return this.usersService.resetPassword(id, dto.newPassword);

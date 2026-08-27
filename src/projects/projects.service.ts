@@ -55,10 +55,12 @@ export class ProjectsService {
 
     const where: Prisma.ProjectWhereInput = {};
 
-    if (user.role === Role.USER) {
+    if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) {
+      if (query.status) {
+        where.status = query.status;
+      }
+    } else {
       where.status = ProjectStatus.PUBLISHED;
-    } else if (query.status) {
-      where.status = query.status;
     }
 
     if (query.departmentId) {
@@ -138,7 +140,7 @@ export class ProjectsService {
 
     if (!project) throw new NotFoundException('Project not found');
 
-    if (user.role === Role.USER && project.status !== ProjectStatus.PUBLISHED) {
+    if (user.role !== Role.ADMIN && user.role !== Role.SUPER_ADMIN && project.status !== ProjectStatus.PUBLISHED) {
       throw new ForbiddenException('Access denied to unpublished or archived project');
     }
 

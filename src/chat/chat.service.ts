@@ -167,7 +167,8 @@ export class ChatService {
   async editMessage(messageId: string, user: { sub: string; role: Role }, newContent: string) {
     const message = await this.prisma.chatMessage.findUnique({ where: { id: messageId } });
     if (!message) throw new NotFoundException('Message not found');
-    if (message.senderId !== user.sub && user.role !== Role.ADMIN) throw new ForbiddenException('You can only edit your own messages');
+    const isAdmin = user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN;
+    if (message.senderId !== user.sub && !isAdmin) throw new ForbiddenException('You can only edit your own messages');
     if (message.isDeleted) throw new ForbiddenException('Cannot edit a deleted message');
 
     return this.prisma.$transaction(async (tx) => {
@@ -193,7 +194,7 @@ export class ChatService {
     if (!message) throw new NotFoundException('Message not found');
     
     // Check if user is the sender, a global admin, or a group admin
-    let hasRights = message.senderId === user.sub || user.role === Role.ADMIN;
+    let hasRights = message.senderId === user.sub || user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN;
     
     if (!hasRights) {
       const membership = await this.prisma.groupMember.findUnique({
@@ -223,7 +224,7 @@ export class ChatService {
   }
 
   private async verifyMembership(groupId: string, user: { sub: string; role: Role }, requireGroupAdmin: boolean = false) {
-    if (user.role === Role.ADMIN) return true; // Global admin bypasses membership checks
+    if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) return true; // Global admin bypasses membership checks
 
     const membership = await this.prisma.groupMember.findUnique({
       where: { userId_groupId: { userId: user.sub, groupId } },
