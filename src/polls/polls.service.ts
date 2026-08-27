@@ -425,6 +425,10 @@ export class PollsService {
       throw new NotFoundException('Опитування не знайдено');
     }
 
+    if (poll.status !== PollStatus.ARCHIVED) {
+      throw new BadRequestException('Видалення дозволено тільки з архіву. Спочатку перемістіть у архів.');
+    }
+
     await this.prisma.poll.delete({ where: { id } });
     return { message: 'Опитування успешно видалено' };
   }

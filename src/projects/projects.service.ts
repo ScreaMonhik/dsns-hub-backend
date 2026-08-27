@@ -239,6 +239,10 @@ export class ProjectsService {
     const project = await this.prisma.project.findUnique({ where: { id } });
     if (!project) throw new NotFoundException('Project not found');
 
+    if (project.status !== ProjectStatus.ARCHIVED) {
+      throw new BadRequestException('Видалення дозволено тільки з архіву. Спочатку перемістіть у архів.');
+    }
+
     const filename = project.fileUrl.split('/').pop();
     if (filename) {
       await this.storageService.deleteFile(`projects/${filename}`);
