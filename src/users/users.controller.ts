@@ -27,6 +27,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 interface RequestWithUser extends Request {
   user: {
@@ -75,6 +76,15 @@ export class UsersController {
     ) file: Express.Multer.File,
   ) {
     return this.usersService.updateAvatar(req.user.sub, file);
+  }
+
+  @ApiOperation({ summary: 'Змінити пароль поточного користувача' })
+  @Patch('me/password')
+  async changePassword(
+    @Req() req: RequestWithUser,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.usersService.changePassword(req.user.sub, dto);
   }
 
   @ApiOperation({ summary: 'Редагувати дані або статус блокування користувача (ADMIN, SUPER_ADMIN)' })

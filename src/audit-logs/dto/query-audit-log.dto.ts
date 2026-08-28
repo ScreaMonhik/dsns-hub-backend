@@ -32,4 +32,9 @@ export class QueryAuditLogDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiPropertyOptional({ description: 'User ID for filtering specific administrator logs', format: 'uuid' })
+  @IsOptional()
+  @IsString()
+  userId?: string;
 }

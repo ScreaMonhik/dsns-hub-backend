@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { Prisma } from '@prisma/client';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -125,5 +126,25 @@ export class UsersService {
     });
 
     return { avatarUrl };
+  }
+
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Користувача не знайдено');
+
+    const isPasswordValid = await bcrypt.compare(dto.oldPassword, user.passwordHash);
+    if (!isPasswordValid) {
+      throw new BadRequestException('Поточний пароль вказано неправильно');
+    }
+
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(dto.newPassword, saltRounds);
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: hashedPassword },
+    });
+
+    return { message: 'Пароль успішно змінено' };
   }
 }

@@ -22,6 +22,10 @@ export class AuditLogsService {
       where.resource = query.resource;
     }
 
+    if (query.userId) {
+      where.userId = query.userId;
+    }
+
     if (query.startDate || query.endDate) {
       where.createdAt = {};
       if (query.startDate) {
