@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { Prisma } from '@prisma/client';
+import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import * as bcrypt from 'bcrypt';
@@ -12,6 +13,44 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
   ) {}
+
+  async create(dto: CreateUserDto) {
+    if (!dto.email.endsWith('@dsns.gov.ua')) {
+      throw new ForbiddenException('Реєстрація дозволена лише для співробітників з доменом @dsns.gov.ua');
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+    
+    if (existingUser) {
+      throw new BadRequestException('Користувач з таким email вже існує');
+    }
+
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
+
+    return this.prisma.user.create({
+      data: {
+        email: dto.email,
+        passwordHash: hashedPassword,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        departmentId: dto.departmentId,
+        role: dto.role ?? 'USER',
+        isActive: dto.isActive ?? true,
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+      }
+    });
+  }
 
   async findAll(page: number, limit: number, search?: string) {
     const skip = (page - 1) * limit;

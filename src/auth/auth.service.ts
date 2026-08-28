@@ -106,6 +106,7 @@ export class AuthService {
         lastName: user.lastName,
         role: user.role,
         avatarUrl: user.avatarUrl,
+        createdAt: user.createdAt,
       },
     };
   }
