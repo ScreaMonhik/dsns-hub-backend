@@ -27,7 +27,6 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 
 interface RequestWithUser extends Request {
@@ -109,10 +108,10 @@ export class UsersController {
     return this.usersService.remove(id);
   }
 
-  @ApiOperation({ summary: 'Скинути пароль користувача вручну (ADMIN, SUPER_ADMIN)' })
+  @ApiOperation({ summary: 'Скинути пароль користувача (Автогенерація тимчасового) (ADMIN, SUPER_ADMIN)' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post(':id/reset-password')
-  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
-    return this.usersService.resetPassword(id, dto.newPassword);
+  resetPassword(@Param('id') id: string) {
+    return this.usersService.resetPassword(id);
   }
 }

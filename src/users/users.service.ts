@@ -6,6 +6,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class UsersService {
@@ -120,19 +121,27 @@ export class UsersService {
     return { message: 'Користувача успішно видалено з системи' };
   }
 
-  async resetPassword(id: string, newPassword: string) {
+  async resetPassword(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('Користувача не знайдено');
 
+    // Автоматична генерація надійного тимчасового пароля, який проходить валідацію DTO (мінімум 8 символів, велика, мала, цифра, спецсимвол)
+    const tempPassword = randomBytes(4).toString('hex') + 'A1!'; 
     const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+    const hashedPassword = await bcrypt.hash(tempPassword, saltRounds);
 
     await this.prisma.user.update({
       where: { id },
-      data: { passwordHash: hashedPassword },
+      data: { 
+        passwordHash: hashedPassword,
+        forcePasswordChange: true 
+      },
     });
 
-    return { message: 'Пароль успішно скинуто' };
+    return { 
+      message: 'Пароль успішно скинуто',
+      tempPassword 
+    };
   }
 
   async getMe(userId: string) {
@@ -181,7 +190,10 @@ export class UsersService {
 
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash: hashedPassword },
+      data: { 
+        passwordHash: hashedPassword,
+        forcePasswordChange: false 
+      },
     });
 
     return { message: 'Пароль успішно змінено' };
