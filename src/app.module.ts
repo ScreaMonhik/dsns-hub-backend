@@ -22,6 +22,7 @@ import { StorageModule } from './storage/storage.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { EmergencyBroadcastsModule } from './emergency-broadcasts/emergency-broadcasts.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -56,7 +57,8 @@ import { EmergencyBroadcastsModule } from './emergency-broadcasts/emergency-broa
     StorageModule,
     AnalyticsModule,
     AuditLogsModule,
-    EmergencyBroadcastsModule
+    EmergencyBroadcastsModule,
+    SettingsModule
   ],
   controllers: [AppController],
   providers: [

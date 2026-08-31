@@ -59,6 +59,12 @@ enum BroadcastStatus {
   PENDING
 }
 
+enum BannerSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
 enum NewsStatus {
   DRAFT
   SCHEDULED
@@ -427,4 +433,16 @@ model EmergencyBroadcast {
 
   @@index([severity, createdAt])
   @@index([authorId])
+}
+
+model SystemSetting {
+  id                   String         @id @default("global")
+  maintenanceMode      Boolean        @default(false)
+  maintenanceMessage   String?        @db.Text
+  globalBannerEnabled  Boolean        @default(false)
+  globalBannerText     String?        @db.Text
+  globalBannerSeverity BannerSeverity @default(INFO)
+  maxPdfSizeMB         Int            @default(20)
+  maxMediaSizeMB       Int            @default(100)
+  updatedAt            DateTime       @updatedAt
 }
