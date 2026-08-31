@@ -114,4 +114,25 @@ export class UsersController {
   resetPassword(@Param('id') id: string) {
     return this.usersService.resetPassword(id);
   }
+
+  @ApiOperation({ summary: 'Отримати список активних сесій конкретного користувача (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Get(':id/sessions')
+  getUserSessions(@Param('id') id: string) {
+    return this.usersService.getUserSessions(id);
+  }
+
+  @ApiOperation({ summary: 'Примусово завершити ВСІ сесії користувача (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Delete(':id/sessions')
+  revokeAllUserSessions(@Param('id') id: string) {
+    return this.usersService.revokeAllUserSessions(id);
+  }
+
+  @ApiOperation({ summary: 'Примусово завершити точкову сесію користувача (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Delete(':id/sessions/:sessionId')
+  revokeUserSession(@Param('id') id: string, @Param('sessionId') sessionId: string) {
+    return this.usersService.revokeUserSession(id, sessionId);
+  }
 }

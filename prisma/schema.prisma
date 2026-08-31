@@ -107,7 +107,6 @@ model User {
   avatarUrl           String?
   isActive            Boolean  @default(true)
   failedLoginAttempts Int      @default(0)
-  refreshToken        String?  @db.Text
   forcePasswordChange Boolean  @default(false)
   createdAt           DateTime @default(now())
 
@@ -132,8 +131,23 @@ model User {
   apiAuditLogs    ApiAuditLog[]
   auditLogsRef    AuditLog[]
   emergencyBroadcasts EmergencyBroadcast[]
+  sessions        UserSession[]
 
   @@index([departmentId])
+}
+
+model UserSession {
+  id           String   @id @default(uuid())
+  refreshToken String   @db.Text
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model AuditLog {

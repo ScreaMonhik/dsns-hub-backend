@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class AuthService {
@@ -53,7 +54,7 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, ip?: string, userAgent?: string) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -94,8 +95,19 @@ export class AuthService {
       });
     }
 
-    const tokens = await this.getTokens(user.id, user.email, user.role);
-    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+    const sessionId = randomUUID();
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    const hash = await bcrypt.hash(tokens.refreshToken, 10);
+    
+    await this.prisma.userSession.create({
+      data: {
+        id: sessionId,
+        userId: user.id,
+        refreshToken: hash,
+        ipAddress: ip,
+        userAgent: userAgent,
+      },
+    });
     
     return {
       ...tokens,
@@ -112,36 +124,79 @@ export class AuthService {
     };
   }
 
-  async logout(userId: string) {
-    await this.prisma.user.updateMany({
-      where: { id: userId, refreshToken: { not: null } },
-      data: { refreshToken: null },
+  async logout(sessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { id: sessionId },
     });
     return { message: 'Успішний вихід із системи' };
   }
 
-  async refreshTokens(userId: string, refreshToken: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+  async refreshTokens(userId: string, sessionId: string, refreshToken: string, ip?: string, userAgent?: string) {
+    const session = await this.prisma.userSession.findUnique({
+      where: { id: sessionId },
+      include: { user: true },
     });
 
-    if (!user || !user.refreshToken || !user.isActive) {
+    if (!session || session.userId !== userId || !session.user.isActive) {
       throw new ForbiddenException('Доступ заборонено');
     }
 
-    const refreshTokenMatches = await bcrypt.compare(refreshToken, user.refreshToken);
+    const refreshTokenMatches = await bcrypt.compare(refreshToken, session.refreshToken);
     if (!refreshTokenMatches) {
       throw new ForbiddenException('Доступ заборонено');
     }
 
-    const tokens = await this.getTokens(user.id, user.email, user.role);
-    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+    const tokens = await this.getTokens(userId, session.user.email, session.user.role, sessionId);
+    const hash = await bcrypt.hash(tokens.refreshToken, 10);
+
+    await this.prisma.userSession.update({
+      where: { id: sessionId },
+      data: {
+        refreshToken: hash,
+        lastActiveAt: new Date(),
+        ...(ip && { ipAddress: ip }),
+        ...(userAgent && { userAgent }),
+      },
+    });
 
     return tokens;
   }
 
-  private async getTokens(userId: string, email: string, role: string) {
-    const jwtPayload = { sub: userId, email, role };
+  async getSessions(userId: string, currentSessionId: string) {
+    const sessions = await this.prisma.userSession.findMany({
+      where: { userId },
+      orderBy: { lastActiveAt: 'desc' },
+    });
+
+    return sessions.map((session) => ({
+      id: session.id,
+      ipAddress: session.ipAddress,
+      userAgent: session.userAgent,
+      lastActiveAt: session.lastActiveAt,
+      createdAt: session.createdAt,
+      isCurrent: session.id === currentSessionId,
+    }));
+  }
+
+  async revokeOtherSessions(userId: string, currentSessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: {
+        userId,
+        id: { not: currentSessionId },
+      },
+    });
+    return { message: 'Всі інші сесії успішно завершені' };
+  }
+
+  async revokeSession(userId: string, sessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { userId, id: sessionId },
+    });
+    return { message: 'Сесію успішно завершено' };
+  }
+
+  private async getTokens(userId: string, email: string, role: string, sessionId: string) {
+    const jwtPayload = { sub: userId, email, role, sessionId };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(jwtPayload, {
@@ -155,14 +210,5 @@ export class AuthService {
     ]);
 
     return { accessToken, refreshToken };
-  }
-
-  private async updateRefreshTokenHash(userId: string, refreshToken: string) {
-    const saltRounds = 10;
-    const hash = await bcrypt.hash(refreshToken, saltRounds);
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { refreshToken: hash },
-    });
   }
 }

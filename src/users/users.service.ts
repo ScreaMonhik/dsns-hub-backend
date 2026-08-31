@@ -198,4 +198,32 @@ export class UsersService {
 
     return { message: 'Пароль успішно змінено' };
   }
+
+  async getUserSessions(userId: string) {
+    return this.prisma.userSession.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        ipAddress: true,
+        userAgent: true,
+        lastActiveAt: true,
+        createdAt: true,
+      },
+      orderBy: { lastActiveAt: 'desc' },
+    });
+  }
+
+  async revokeAllUserSessions(userId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { userId },
+    });
+    return { message: 'Всі сесії користувача примусово завершено' };
+  }
+
+  async revokeUserSession(userId: string, sessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { userId, id: sessionId },
+    });
+    return { message: 'Сесію користувача примусово завершено' };
+  }
 }

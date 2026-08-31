@@ -23,13 +23,13 @@ export class WsJwtGuard implements CanActivate {
         secret: 'super-secret-key', // TODO: Move to .env
       });
 
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: { isActive: true },
+      const session = await this.prisma.userSession.findUnique({
+        where: { id: payload.sessionId },
+        include: { user: { select: { isActive: true } } },
       });
 
-      if (!user || !user.isActive) {
-        throw new ForbiddenException('User account is inactive or deleted');
+      if (!session || !session.user.isActive) {
+        throw new ForbiddenException('User account is inactive or session revoked');
       }
 
       client.data.user = payload;
