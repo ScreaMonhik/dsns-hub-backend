@@ -186,4 +186,21 @@ export class DepartmentsService {
     
     return { message: 'Підрозділ успішно видалено' };
   }
+
+  async exportStructureJson() {
+    const departments = await this.prisma.department.findMany({
+      orderBy: [
+        { orderIndex: 'asc' },
+        { name: 'asc' },
+      ],
+    });
+
+    const formattedData = departments.map((dept) => ({
+      id: dept.id,
+      pid: dept.parentId,
+      label: dept.name,
+    }));
+
+    return JSON.stringify(formattedData, null, 2);
+  }
 }

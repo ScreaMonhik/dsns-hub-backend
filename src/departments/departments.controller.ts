@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, UseInterceptors, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, UseInterceptors, Query, Res } from '@nestjs/common';
 import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
@@ -40,6 +40,18 @@ export class DepartmentsController {
   @Patch('reorder')
   reorder(@Body() dto: ReorderDepartmentsDto) {
     return this.departmentsService.reorder(dto.items);
+  }
+
+  @ApiOperation({ summary: 'Експорт всієї структури у форматі JSON для переносу на Prod (SUPER_ADMIN)' })
+  @Roles(Role.SUPER_ADMIN)
+  @Get('export-json')
+  async exportStructureJson(@Res() res) {
+    const jsonString = await this.departmentsService.exportStructureJson();
+    
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="org_structure.json"');
+    
+    return res.send(jsonString);
   }
 
   @Get()
