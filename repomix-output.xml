@@ -102,6 +102,8 @@ src/
     dto/
       create-department.dto.ts
       query-department.dto.ts
+      reorder-departments.dto.ts
+      update-department.dto.ts
     departments.controller.spec.ts
     departments.controller.ts
     departments.module.ts
@@ -174,6 +176,14 @@ src/
     file-security.service.spec.ts
     file-security.service.ts
     security.module.ts
+  settings/
+    dto/
+      update-settings.dto.ts
+    settings.controller.spec.ts
+    settings.controller.ts
+    settings.module.ts
+    settings.service.spec.ts
+    settings.service.ts
   storage/
     storage.module.ts
     storage.service.spec.ts
@@ -182,7 +192,6 @@ src/
     dto/
       change-password.dto.ts
       create-user.dto.ts
-      reset-password.dto.ts
       update-user.dto.ts
     avatars.controller.ts
     users.controller.spec.ts
@@ -239,254 +248,6 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
-
-<file path="prisma/seed.ts">
-import { PrismaClient } from '@prisma/client';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
-const prisma = new PrismaClient();
-
-interface FlatDepartment {
-  id: string;
-  pid: string | null;
-  label: string;
-  hasChildren: boolean;
-  hasAccess: number;
-}
-
-// Regex patterns for technical garbage or deleted records
-const GARBAGE_PATTERNS = [
-  /ТЕСТ/i,
-  /TEST/i,
-  /АРХІВ/i,
-  /ВИДАЛЕН/i,
-  /DELETE/i,
-  /НЕ ВИКОРИСТОВУЄТЬСЯ/i,
-  /ДУБЛЬ/i,
-  /ТЕМП/i,
-  /TEMP/i,
-  /^\s*$/,
-];
-
-// Cyrillic-safe patterns WITHOUT ASCII-only '\b' boundaries
-const INTERNAL_OFFICE_PATTERNS = [
-  /відділ/i,
-  /відділення/i,
-  /сектор/i,
-  /апарат/i,
-  /бухгалтер/i,
-  /канцеляр/i,
-  /секретар/i,
-  /юрист/i,
-  /юридичн/i,
-  /прес-служб/i,
-  /штаб/i,
-  /група/i,
-  /лаборатор/i,
-  /служба\s+забезпечення/i,
-];
-
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function isExcludedDepartment(label: string, hasAccess: number): boolean {
-  if (hasAccess !== 1) return true;
-
-  const trimmed = label.trim();
-
-  if (GARBAGE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
-    return true;
-  }
-
-  if (INTERNAL_OFFICE_PATTERNS.some((pattern) => pattern.test(trimmed))) {
-    return true;
-  }
-
-  // Filter out non-main "Управління" (keep "Головне управління" and "ГУ")
-  const lower = trimmed.toLowerCase();
-  if (lower.includes('управління') || lower.includes('управлiння')) {
-    const isMain =
-      lower.includes('головне') ||
-      lower.includes(' гу ') ||
-      lower.startsWith('гу ') ||
-      lower.endsWith(' гу') ||
-      lower === 'гу';
-
-    if (!isMain) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function normalizeLabel(rawLabel: string, parentLabel?: string): string {
-  let label = rawLabel.trim();
-
-  // 1. Remove tech indices in brackets at the end, like "(09)", "( 12 )"
-  label = label.replace(/\s*\([\d\s,-]+\)\s*$/g, '');
-
-  // 2. Strip quotes and № symbol
-  label = label.replace(/["'«»]/g, '').replace(/№\s*/g, '');
-
-  // 3. Unify hyphens/dashes between numbers and unit acronyms (e.g. "1-ДПРЗ" -> "1 ДПРЗ")
-  label = label.replace(/(\d+)\s*[-–—]\s*([А-ЯІЇЄҐа-яіїєґ]+)/gi, '$1 $2');
-  label = label.replace(/([А-ЯІЇЄҐа-яіїєґ]+)\s*[-–—]\s*(\d+)/gi, '$1 $2');
-
-  // 4. Strip parent label text if child explicitly repeats its parent full name
-  if (parentLabel && parentLabel.trim().length > 0) {
-    const cleanParent = parentLabel.replace(/["'«»]/g, '').trim();
-    if (label.toLowerCase().includes(cleanParent.toLowerCase())) {
-      const reg = new RegExp(escapeRegExp(cleanParent), 'gi');
-      label = label.replace(reg, '');
-    }
-  }
-
-  // 5. Strip redundant regional management mentions from sub-unit labels
-  if (parentLabel) {
-    label = label.replace(
-      /\s*(ГУ|ГОЛОВН(Е|ОГО)\s+УПРАВЛІНН(Я|Ю))\s+ДСНС(\s+УКРАЇНИ)?(\s+(У|В)\s+[А-ЯІЇЄҐ\s-]+ОБЛАСТ(І|Я))?/gi,
-      '',
-    );
-    label = label.replace(/\s*ДСНС\s+УКРАЇНИ/gi, '');
-  }
-
-  // 6. Clean up orphan punctuation, double spaces, and trailing symbols
-  label = label
-    .replace(/^[\s,-]+|[\s,-]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return label.length > 0 ? label : rawLabel.trim();
-}
-
-async function main() {
-  const filePath = path.join(__dirname, 'org_structure.json');
-  if (!fs.existsSync(filePath)) {
-    console.error('Error: org_structure.json file not found in prisma/ directory.');
-    return;
-  }
-
-  const rawData = fs.readFileSync(filePath, 'utf-8');
-  const parsed = JSON.parse(rawData);
-  const rawItems: FlatDepartment[] = parsed.flat || parsed;
-
-  console.log(`Original record count: ${rawItems.length}`);
-
-  // Step 1: Build initial parent lookup map for context-aware normalization
-  const rawItemMap = new Map<string, FlatDepartment>();
-  rawItems.forEach((item) => rawItemMap.set(item.id, item));
-
-  // Step 2: Filter out internal offices & garbage, normalize valid operational labels
-  const sanitizedItems: FlatDepartment[] = [];
-  const validIds = new Set<string>();
-
-  for (const item of rawItems) {
-    const parent = item.pid ? rawItemMap.get(item.pid) : undefined;
-    const parentLabel = parent?.label;
-    const cleanedText = normalizeLabel(item.label, parentLabel);
-
-    if (!isExcludedDepartment(cleanedText, item.hasAccess)) {
-      sanitizedItems.push({
-        ...item,
-        label: cleanedText,
-      });
-      validIds.add(item.id);
-    }
-  }
-
-  // Helper to re-parent operational units if their intermediate administrative parent was filtered out
-  function getNearestValidParentId(pid: string | null): string | null {
-    let currentPid = pid;
-    while (currentPid && currentPid !== '00000000-0000-0000-0000-000000000000') {
-      if (validIds.has(currentPid)) {
-        return currentPid;
-      }
-      const parent = rawItemMap.get(currentPid);
-      currentPid = parent ? parent.pid : null;
-    }
-    return null;
-  }
-
-  // Step 3: Re-parent operational units to valid higher-level ancestors
-  const validTreeItems = sanitizedItems.map((item) => {
-    const resolvedPid = getNearestValidParentId(item.pid);
-    return {
-      ...item,
-      pid: resolvedPid,
-    };
-  });
-
-  // Step 3: Deduplicate entries having identical label under the same parent
-  const uniqueItemsMap = new Map<string, FlatDepartment>();
-  for (const item of validTreeItems) {
-    const compositeKey = `${item.pid || 'root'}_${item.label.toLowerCase()}`;
-    if (!uniqueItemsMap.has(compositeKey)) {
-      uniqueItemsMap.set(compositeKey, item);
-    }
-  }
-
-  const finalItems = Array.from(uniqueItemsMap.values());
-  console.log(`Sanitized clean record count: ${finalItems.length} (Removed ${rawItems.length - finalItems.length} garbage/duplicate records)`);
-
-  // Step 4: Map dependencies and topological sort to respect foreign keys
-  const itemMap = new Map<string, FlatDepartment>();
-  finalItems.forEach((item) => itemMap.set(item.id, item));
-
-  const sorted: FlatDepartment[] = [];
-  const visited = new Set<string>();
-
-  function visit(item: FlatDepartment) {
-    if (visited.has(item.id)) return;
-    if (item.pid && itemMap.has(item.pid)) {
-      const parent = itemMap.get(item.pid);
-      if (parent) visit(parent);
-    }
-    visited.add(item.id);
-    sorted.push(item);
-  }
-
-  finalItems.forEach((item) => visit(item));
-
-  // Step 5: Unlink users first to avoid Foreign Key constraint violations
-  console.log('Unlinking users from existing departments...');
-  await prisma.user.updateMany({
-    data: { departmentId: null },
-  });
-
-  console.log('Cleaning existing department database table...');
-  await prisma.department.deleteMany();
-
-  console.log('Seeding clean organization structure...');
-  for (const item of sorted) {
-    const parentId =
-      item.pid && item.pid !== item.id && itemMap.has(item.pid)
-        ? item.pid
-        : null;
-
-    await prisma.department.create({
-      data: {
-        id: item.id,
-        name: item.label,
-        parentId,
-      },
-    });
-  }
-
-  console.log('Sanitized Org structure successfully seeded to database!');
-}
-
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
-</file>
 
 <file path="src/analytics/dto/export-analytics.dto.ts">
 import { IsEnum, IsOptional, IsDateString } from 'class-validator';
@@ -943,6 +704,42 @@ export class WsThrottlerGuard extends ThrottlerGuard {
     return true;
   }
 }
+</file>
+
+<file path="src/departments/dto/reorder-departments.dto.ts">
+import { IsString, IsInt, IsOptional, IsArray, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+export class DepartmentReorderItemDto {
+  @ApiProperty({ description: 'ID підрозділу', format: 'uuid' })
+  @IsString()
+  id!: string;
+
+  @ApiPropertyOptional({ description: 'ID нового батьківського підрозділу', format: 'uuid', nullable: true })
+  @IsString()
+  @IsOptional()
+  parentId?: string | null;
+
+  @ApiProperty({ description: 'Новий індекс сортування', example: 0 })
+  @IsInt()
+  orderIndex!: number;
+}
+
+export class ReorderDepartmentsDto {
+  @ApiProperty({ type: [DepartmentReorderItemDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DepartmentReorderItemDto)
+  items!: DepartmentReorderItemDto[];
+}
+</file>
+
+<file path="src/departments/dto/update-department.dto.ts">
+import { PartialType } from '@nestjs/swagger';
+import { CreateDepartmentDto } from './create-department.dto';
+
+export class UpdateDepartmentDto extends PartialType(CreateDepartmentDto) {}
 </file>
 
 <file path="src/departments/departments.controller.spec.ts">
@@ -1811,6 +1608,203 @@ import { FileSecurityService } from './file-security.service';
 export class SecurityModule {}
 </file>
 
+<file path="src/settings/dto/update-settings.dto.ts">
+import { IsBoolean, IsString, IsOptional, IsEnum, IsInt, Min, Max } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { BannerSeverity } from '@prisma/client';
+
+export class UpdateSettingsDto {
+  @ApiPropertyOptional({ description: 'Режим технічних робіт' })
+  @IsBoolean()
+  @IsOptional()
+  maintenanceMode?: boolean;
+
+  @ApiPropertyOptional({ description: 'Повідомлення для користувачів під час тех. робіт' })
+  @IsString()
+  @IsOptional()
+  maintenanceMessage?: string;
+
+  @ApiPropertyOptional({ description: 'Чи увімкнений системний банер' })
+  @IsBoolean()
+  @IsOptional()
+  globalBannerEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Текст системного сповіщення' })
+  @IsString()
+  @IsOptional()
+  globalBannerText?: string;
+
+  @ApiPropertyOptional({ enum: BannerSeverity, description: 'Тип сповіщення' })
+  @IsEnum(BannerSeverity)
+  @IsOptional()
+  globalBannerSeverity?: BannerSeverity;
+
+  @ApiPropertyOptional({ description: 'Ліміт для завантаження PDF (МБ)' })
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  maxPdfSizeMB?: number;
+
+  @ApiPropertyOptional({ description: 'Ліміт для медіафайлів (МБ)' })
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  @IsOptional()
+  maxMediaSizeMB?: number;
+}
+</file>
+
+<file path="src/settings/settings.controller.spec.ts">
+import { Test, TestingModule } from '@nestjs/testing';
+import { SettingsController } from './settings.controller';
+
+describe('SettingsController', () => {
+  let controller: SettingsController;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [SettingsController],
+    }).compile();
+
+    controller = module.get<SettingsController>(SettingsController);
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+});
+</file>
+
+<file path="src/settings/settings.controller.ts">
+import { Controller, Get, Patch, Body, UseGuards, Req } from '@nestjs/common';
+import { SettingsService } from './settings.service';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '@prisma/client';
+import { Request } from 'express';
+
+interface RequestWithUser extends Request {
+  user: { sub: string; email: string; role: Role };
+}
+
+@ApiTags('Settings')
+@Controller('settings')
+export class SettingsController {
+  constructor(private readonly settingsService: SettingsService) {}
+
+  @ApiOperation({ summary: 'Отримати глобальні налаштування системи (Публічний доступ)' })
+  @Get()
+  getSettings() {
+    return this.settingsService.getSettings();
+  }
+
+  @ApiOperation({ summary: 'Оновити глобальні налаштування (SUPER_ADMIN)' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @Patch()
+  updateSettings(@Req() req: RequestWithUser, @Body() dto: UpdateSettingsDto) {
+    return this.settingsService.updateSettings(dto, req.user.sub);
+  }
+}
+</file>
+
+<file path="src/settings/settings.module.ts">
+import { Module } from '@nestjs/common';
+import { SettingsService } from './settings.service';
+import { SettingsController } from './settings.controller';
+
+@Module({
+  controllers: [SettingsController],
+  providers: [SettingsService],
+  exports: [SettingsService],
+})
+export class SettingsModule {}
+</file>
+
+<file path="src/settings/settings.service.spec.ts">
+import { Test, TestingModule } from '@nestjs/testing';
+import { SettingsService } from './settings.service';
+
+describe('SettingsService', () => {
+  let service: SettingsService;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [SettingsService],
+    }).compile();
+
+    service = module.get<SettingsService>(SettingsService);
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+});
+</file>
+
+<file path="src/settings/settings.service.ts">
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
+import { BannerSeverity } from '@prisma/client';
+
+@Injectable()
+export class SettingsService {
+  private readonly SETTINGS_ID = 'global';
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getSettings() {
+    let settings = await this.prisma.systemSetting.findUnique({
+      where: { id: this.SETTINGS_ID },
+    });
+
+    if (!settings) {
+      settings = await this.prisma.systemSetting.create({
+        data: {
+          id: this.SETTINGS_ID,
+          maintenanceMode: false,
+          globalBannerEnabled: false,
+          globalBannerSeverity: BannerSeverity.INFO,
+          maxPdfSizeMB: 20,
+          maxMediaSizeMB: 100,
+        },
+      });
+    }
+
+    return settings;
+  }
+
+  async updateSettings(dto: UpdateSettingsDto, userId: string) {
+    const updatedSettings = await this.prisma.systemSetting.upsert({
+      where: { id: this.SETTINGS_ID },
+      update: dto,
+      create: {
+        id: this.SETTINGS_ID,
+        ...dto,
+      },
+    });
+
+    await this.prisma.systemAuditLog.create({
+      data: {
+        entityName: 'SystemSetting',
+        entityId: this.SETTINGS_ID,
+        action: 'UPDATE',
+        newValues: dto as any,
+        userId,
+      },
+    });
+
+    return updatedSettings;
+  }
+}
+</file>
+
 <file path="src/storage/storage.module.ts">
 import { Global, Module } from '@nestjs/common';
 import { StorageService } from './storage.service';
@@ -2209,6 +2203,92 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 }
 </file>
 
+<file path="prisma/seed.ts">
+import { PrismaClient } from '@prisma/client';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+const prisma = new PrismaClient();
+
+interface FlatDepartment {
+  id: string;
+  pid: string | null;
+  label: string;
+}
+
+async function main() {
+  const filePath = path.join(__dirname, 'org_structure.json');
+  if (!fs.existsSync(filePath)) {
+    console.error('Error: org_structure.json file not found in prisma/ directory.');
+    return;
+  }
+
+  const rawData = fs.readFileSync(filePath, 'utf-8');
+  const parsed = JSON.parse(rawData) as { flat?: FlatDepartment[] } | FlatDepartment[];
+  const rawItems: FlatDepartment[] = Array.isArray(parsed) ? parsed : (parsed.flat || []);
+
+  console.log(`Original record count from JSON: ${rawItems.length}`);
+
+  // 1. Build map for O(1) lookups
+  const itemMap = new Map<string, FlatDepartment>();
+  rawItems.forEach((item) => itemMap.set(item.id, item));
+
+  // 2. Topological sort to respect Foreign Key constraints (parents before children)
+  const sorted: FlatDepartment[] = [];
+  const visited = new Set<string>();
+
+  function visit(item: FlatDepartment) {
+    if (visited.has(item.id)) return;
+    
+    // Prevent self-referencing and ensure parent exists in dataset
+    if (item.pid && item.pid !== item.id && itemMap.has(item.pid)) {
+      const parent = itemMap.get(item.pid);
+      if (parent) visit(parent);
+    }
+    
+    visited.add(item.id);
+    sorted.push(item);
+  }
+
+  rawItems.forEach((item) => visit(item));
+
+  // 3. Reset relationships and clean table
+  console.log('Unlinking users from existing departments...');
+  await prisma.user.updateMany({
+    data: { departmentId: null },
+  });
+
+  console.log('Cleaning existing department database table...');
+  await prisma.department.deleteMany();
+
+  // 4. Seed 1:1 exact structure
+  console.log(`Seeding EXACT organizational structure (${sorted.length} records)...`);
+  
+  for (const item of sorted) {
+    const parentId = item.pid && item.pid !== item.id && itemMap.has(item.pid) ? item.pid : null;
+
+    await prisma.department.create({
+      data: {
+        id: item.id,
+        name: item.label || 'Без назви',
+        parentId,
+      },
+    });
+  }
+
+  console.log('Exact Org structure successfully seeded to database!');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+</file>
+
 <file path="src/audit-logs/dto/query-audit-log.dto.ts">
 import { IsOptional, IsString, IsDateString, IsEnum } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -2327,170 +2407,6 @@ export class AuditLogsService {
         limit: limitNumber,
       },
     };
-  }
-}
-</file>
-
-<file path="src/auth/guards/jwt-auth.guard.ts">
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { Request } from 'express';
-import { PrismaService } from '../../prisma/prisma.service';
-
-@Injectable()
-export class JwtAuthGuard implements CanActivate {
-  constructor(
-    private jwtService: JwtService,
-    private prisma: PrismaService,
-  ) {}
-
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<Request>();
-    const token = this.extractTokenFromHeader(request);
-    
-    if (!token) {
-      throw new UnauthorizedException('Missing authentication token');
-    }
-    
-    try {
-      const payload = await this.jwtService.verifyAsync(token, {
-        secret: 'super-secret-key', // TODO: Move to .env
-      });
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: { isActive: true },
-      });
-
-      if (!user || !user.isActive) {
-        throw new ForbiddenException('User account is inactive or deleted');
-      }
-
-      request['user'] = payload;
-    } catch (err) {
-      if (err instanceof ForbiddenException) throw err;
-      throw new UnauthorizedException('Invalid or expired token');
-    }
-    
-    return true;
-  }
-
-  private extractTokenFromHeader(request: Request): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
-  }
-}
-</file>
-
-<file path="src/auth/guards/ws-jwt.guard.ts">
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import { Socket } from 'socket.io';
-import { PrismaService } from '../../prisma/prisma.service';
-
-@Injectable()
-export class WsJwtGuard implements CanActivate {
-  constructor(
-    private jwtService: JwtService,
-    private prisma: PrismaService,
-  ) {}
-
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const client: Socket = context.switchToWs().getClient<Socket>();
-    const token = this.extractToken(client);
-
-    if (!token) {
-      throw new UnauthorizedException('Missing WS token');
-    }
-
-    try {
-      const payload = await this.jwtService.verifyAsync(token, {
-        secret: 'super-secret-key', // TODO: Move to .env
-      });
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: { isActive: true },
-      });
-
-      if (!user || !user.isActive) {
-        throw new ForbiddenException('User account is inactive or deleted');
-      }
-
-      client.data.user = payload;
-      return true;
-    } catch (err) {
-      if (err instanceof ForbiddenException) throw err;
-      throw new UnauthorizedException('Invalid or expired WS token');
-    }
-  }
-
-  private extractToken(client: Socket): string | undefined {
-    const authHeader = client.handshake.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      return authHeader.split(' ')[1];
-    }
-    return client.handshake.auth?.token;
-  }
-}
-</file>
-
-<file path="src/auth/auth.controller.ts">
-import { Controller, Post, Body, UseGuards, Req, UnauthorizedException } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { JwtService } from '@nestjs/jwt';
-import { Request } from 'express';
-import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto, RefreshTokenDto } from './dto/auth.dto';
-import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { Role } from '@prisma/client';
-
-interface RequestWithUser extends Request {
-  user: { sub: string; email: string; role: Role };
-}
-
-@ApiTags('Auth')
-@Controller('auth')
-export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-    private readonly jwtService: JwtService,
-  ) {}
-
-  @ApiOperation({ summary: 'Реєстрація нового співробітника' })
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
-  }
-
-  @ApiOperation({ summary: 'Вхід у систему' })
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @Post('login')
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
-  }
-
-  @ApiOperation({ summary: 'Вихід із системи (анулювання Refresh Token)' })
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
-  @Post('logout')
-  logout(@Req() req: RequestWithUser) {
-    return this.authService.logout(req.user.sub);
-  }
-
-  @ApiOperation({ summary: 'Оновлення токенів доступу' })
-  @Post('refresh')
-  async refreshTokens(@Body() dto: RefreshTokenDto) {
-    try {
-      const payload = await this.jwtService.verifyAsync(dto.refreshToken, {
-        secret: 'super-secret-refresh-key', // TODO: Move to .env
-      });
-      return this.authService.refreshTokens(payload.sub, dto.refreshToken);
-    } catch (e) {
-      throw new UnauthorizedException('Недійсний або протермінований Refresh Token');
-    }
   }
 }
 </file>
@@ -2859,21 +2775,6 @@ export class StorageService implements OnModuleInit {
 }
 </file>
 
-<file path="src/users/dto/reset-password.dto.ts">
-import { IsString, IsNotEmpty, Matches } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-
-export class ResetPasswordDto {
-  @ApiProperty({ description: 'Новий пароль для користувача', example: 'SuperSecret1!' })
-  @IsString()
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/, {
-    message: 'Пароль має містити щонайменше 8 символів, одну велику літеру, одну малу літеру, одну цифру та один спеціальний символ (@$!%*?&)',
-  })
-  @IsNotEmpty()
-  newPassword!: string;
-}
-</file>
-
 <file path="src/users/avatars.controller.ts">
 import { Controller, Get, Param, NotFoundException, StreamableFile, Res } from '@nestjs/common';
 import { StorageService } from '../storage/storage.service';
@@ -2918,6 +2819,202 @@ import { AvatarsController } from './avatars.controller';
   controllers: [UsersController, AvatarsController]
 })
 export class UsersModule {}
+</file>
+
+<file path="src/auth/guards/jwt-auth.guard.ts">
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class JwtAuthGuard implements CanActivate {
+  constructor(
+    private jwtService: JwtService,
+    private prisma: PrismaService,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<Request>();
+    const token = this.extractTokenFromHeader(request);
+    
+    if (!token) {
+      throw new UnauthorizedException('Missing authentication token');
+    }
+    
+    try {
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret: 'super-secret-key', // TODO: Move to .env
+      });
+
+      const session = await this.prisma.userSession.findUnique({
+        where: { id: payload.sessionId },
+        include: { user: { select: { isActive: true } } },
+      });
+
+      if (!session || !session.user.isActive) {
+        throw new ForbiddenException('User account is inactive or session revoked');
+      }
+
+      request['user'] = payload;
+    } catch (err) {
+      if (err instanceof ForbiddenException) throw err;
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    
+    return true;
+  }
+
+  private extractTokenFromHeader(request: Request): string | undefined {
+    const [type, token] = request.headers.authorization?.split(' ') ?? [];
+    return type === 'Bearer' ? token : undefined;
+  }
+}
+</file>
+
+<file path="src/auth/guards/ws-jwt.guard.ts">
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Socket } from 'socket.io';
+import { PrismaService } from '../../prisma/prisma.service';
+
+@Injectable()
+export class WsJwtGuard implements CanActivate {
+  constructor(
+    private jwtService: JwtService,
+    private prisma: PrismaService,
+  ) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const client: Socket = context.switchToWs().getClient<Socket>();
+    const token = this.extractToken(client);
+
+    if (!token) {
+      throw new UnauthorizedException('Missing WS token');
+    }
+
+    try {
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret: 'super-secret-key', // TODO: Move to .env
+      });
+
+      const session = await this.prisma.userSession.findUnique({
+        where: { id: payload.sessionId },
+        include: { user: { select: { isActive: true } } },
+      });
+
+      if (!session || !session.user.isActive) {
+        throw new ForbiddenException('User account is inactive or session revoked');
+      }
+
+      client.data.user = payload;
+      return true;
+    } catch (err) {
+      if (err instanceof ForbiddenException) throw err;
+      throw new UnauthorizedException('Invalid or expired WS token');
+    }
+  }
+
+  private extractToken(client: Socket): string | undefined {
+    const authHeader = client.handshake.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      return authHeader.split(' ')[1];
+    }
+    return client.handshake.auth?.token;
+  }
+}
+</file>
+
+<file path="src/auth/auth.controller.ts">
+import { Controller, Post, Body, UseGuards, Req, UnauthorizedException, Get, Delete, Param, Ip, Headers } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
+import { AuthService } from './auth.service';
+import { RegisterDto, LoginDto, RefreshTokenDto } from './dto/auth.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Role } from '@prisma/client';
+
+interface RequestWithUser extends Request {
+  user: { sub: string; email: string; role: Role; sessionId: string };
+}
+
+@ApiTags('Auth')
+@Controller('auth')
+export class AuthController {
+  constructor(
+    private readonly authService: AuthService,
+    private readonly jwtService: JwtService,
+  ) {}
+
+  @ApiOperation({ summary: 'Реєстрація нового співробітника' })
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('register')
+  register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
+  }
+
+  @ApiOperation({ summary: 'Вхід у систему' })
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('login')
+  login(
+    @Body() dto: LoginDto,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.authService.login(dto, ip, userAgent);
+  }
+
+  @ApiOperation({ summary: 'Вихід із системи (анулювання поточної сесії)' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  logout(@Req() req: RequestWithUser) {
+    return this.authService.logout(req.user.sessionId);
+  }
+
+  @ApiOperation({ summary: 'Оновлення токенів доступу' })
+  @Post('refresh')
+  async refreshTokens(
+    @Body() dto: RefreshTokenDto,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    try {
+      const payload = await this.jwtService.verifyAsync(dto.refreshToken, {
+        secret: 'super-secret-refresh-key', // TODO: Move to .env
+      });
+      return this.authService.refreshTokens(payload.sub, payload.sessionId, dto.refreshToken, ip, userAgent);
+    } catch (e) {
+      throw new UnauthorizedException('Недійсний або протермінований Refresh Token');
+    }
+  }
+
+  @ApiOperation({ summary: 'Отримати список активних сесій поточного користувача' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Get('sessions')
+  getSessions(@Req() req: RequestWithUser) {
+    return this.authService.getSessions(req.user.sub, req.user.sessionId);
+  }
+
+  @ApiOperation({ summary: 'Завершити всі сесії поточного користувача, крім поточної' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Delete('sessions/other')
+  revokeOtherSessions(@Req() req: RequestWithUser) {
+    return this.authService.revokeOtherSessions(req.user.sub, req.user.sessionId);
+  }
+
+  @ApiOperation({ summary: 'Завершити конкретну сесію поточного користувача' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Delete('sessions/:sessionId')
+  revokeSession(@Req() req: RequestWithUser, @Param('sessionId') sessionId: string) {
+    return this.authService.revokeSession(req.user.sub, sessionId);
+  }
+}
 </file>
 
 <file path="src/chat/dto/manage-member.dto.ts">
@@ -3451,130 +3548,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (error: any) {
       return { status: 'error', message: error.message };
     }
-  }
-}
-</file>
-
-<file path="src/departments/departments.controller.ts">
-import { Controller, Get, Post, Body, UseGuards, UseInterceptors, Query } from '@nestjs/common';
-import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
-import { DepartmentsService } from './departments.service';
-import { CreateDepartmentDto } from './dto/create-department.dto';
-import { QueryDepartmentDto } from './dto/query-department.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { Role } from '@prisma/client';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-
-@ApiTags('Departments')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('departments')
-export class DepartmentsController {
-  constructor(private readonly departmentsService: DepartmentsService) {}
-
-  @ApiOperation({ summary: 'Створити новий підрозділ (ADMIN, SUPER_ADMIN)' })
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Post()
-  create(@Body() dto: CreateDepartmentDto) {
-    return this.departmentsService.create(dto);
-  }
-
-  @ApiOperation({ summary: 'Отримати список підрозділів (з пагінацією та пошуком)' })
-  @UseInterceptors(CacheInterceptor)
-  @CacheTTL(3600000) // NestJS автоматично згенерує ключ кешу на основі URL з query-параметрами
-  @Get()
-  findAll(@Query() query: QueryDepartmentDto) {
-    return this.departmentsService.findAll(query);
-  }
-}
-</file>
-
-<file path="src/departments/departments.service.ts">
-import { Injectable, ConflictException, Inject } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateDepartmentDto } from './dto/create-department.dto';
-import { QueryDepartmentDto } from './dto/query-department.dto';
-import { Prisma } from '@prisma/client';
-
-@Injectable()
-export class DepartmentsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
-  ) {}
-
-  async create(dto: CreateDepartmentDto) {
-    const exists = await this.prisma.department.findFirst({
-      where: {
-        name: dto.name,
-        parentId: dto.parentId ?? null,
-      },
-    });
-
-    if (exists) {
-      throw new ConflictException('Підрозділ з такою назвою вже існує у даному блоці');
-    }
-
-    return this.prisma.department.create({
-      data: {
-        name: dto.name,
-        parentId: dto.parentId,
-      },
-    });
-  }
-
-  async findAll(query: QueryDepartmentDto) {
-    const pageNumber = Math.max(1, Number(query.page) || 1);
-    const limitNumber = Math.max(1, Number(query.limit) || 100);
-    const skip = (pageNumber - 1) * limitNumber;
-
-    const where: Prisma.DepartmentWhereInput = {};
-
-    if (query.parentId !== undefined) {
-      if (query.parentId === 'null' || query.parentId === '') {
-        where.parentId = null;
-      } else {
-        where.parentId = query.parentId;
-      }
-    }
-
-    if (query.search) {
-      where.name = { contains: query.search, mode: 'insensitive' };
-    }
-
-    const [data, total] = await Promise.all([
-      this.prisma.department.findMany({
-        where,
-        skip,
-        take: limitNumber,
-        orderBy: { name: 'asc' },
-        include: {
-          _count: { select: { children: true } },
-        },
-      }),
-      this.prisma.department.count({ where }),
-    ]);
-
-    const mappedData = data.map((dept) => ({
-      id: dept.id,
-      name: dept.name,
-      parentId: dept.parentId,
-      hasChildren: dept._count.children > 0,
-    }));
-
-    return {
-      data: mappedData,
-      meta: {
-        total,
-        page: pageNumber,
-        lastPage: Math.ceil(total / limitNumber) || 1,
-        limit: limitNumber,
-      },
-    };
   }
 }
 </file>
@@ -4712,6 +4685,293 @@ export class ChatController {
     @Query('take', new DefaultValuePipe(50), ParseIntPipe) take: number,
   ) {
     return this.chatService.getAuditLogs(skip, take);
+  }
+}
+</file>
+
+<file path="src/departments/departments.controller.ts">
+import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards, UseInterceptors, Query, Res } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+import { DepartmentsService } from './departments.service';
+import { CreateDepartmentDto } from './dto/create-department.dto';
+import { UpdateDepartmentDto } from './dto/update-department.dto';
+import { QueryDepartmentDto } from './dto/query-department.dto';
+import { ReorderDepartmentsDto } from './dto/reorder-departments.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '@prisma/client';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+
+@ApiTags('Departments')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('departments')
+export class DepartmentsController {
+  constructor(private readonly departmentsService: DepartmentsService) {}
+
+  @ApiOperation({ summary: 'Створити новий підрозділ (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Post()
+  create(@Body() dto: CreateDepartmentDto) {
+    return this.departmentsService.create(dto);
+  }
+
+  @ApiOperation({ summary: 'Отримати список підрозділів (з пагінацією та пошуком)' })
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(3600000) // NestJS автоматично згенерує ключ кешу на основі URL з query-параметрами
+  @ApiOperation({ summary: 'Отримати повне дерево підрозділів без пагінації (SUPER_ADMIN)' })
+  @Roles(Role.SUPER_ADMIN)
+  @Get('all')
+  findAllTree() {
+    return this.departmentsService.findAllTree();
+  }
+
+  @ApiOperation({ summary: 'Масове оновлення порядку підрозділів після Drag-and-Drop (SUPER_ADMIN)' })
+  @Roles(Role.SUPER_ADMIN)
+  @Patch('reorder')
+  reorder(@Body() dto: ReorderDepartmentsDto) {
+    return this.departmentsService.reorder(dto.items);
+  }
+
+  @ApiOperation({ summary: 'Експорт всієї структури у форматі JSON для переносу на Prod (SUPER_ADMIN)' })
+  @Roles(Role.SUPER_ADMIN)
+  @Get('export-json')
+  async exportStructureJson(@Res() res) {
+    const jsonString = await this.departmentsService.exportStructureJson();
+    
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="org_structure.json"');
+    
+    return res.send(jsonString);
+  }
+
+  @Get()
+  findAll(@Query() query: QueryDepartmentDto) {
+    return this.departmentsService.findAll(query);
+  }
+
+  @ApiOperation({ summary: 'Перейменувати або перемістити підрозділ (SUPER_ADMIN)' })
+  @Roles(Role.SUPER_ADMIN)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateDepartmentDto) {
+    return this.departmentsService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Видалити підрозділ (SUPER_ADMIN)' })
+  @Roles(Role.SUPER_ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.departmentsService.remove(id);
+  }
+}
+</file>
+
+<file path="src/departments/departments.service.ts">
+import { Injectable, ConflictException, NotFoundException, BadRequestException, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateDepartmentDto } from './dto/create-department.dto';
+import { UpdateDepartmentDto } from './dto/update-department.dto';
+import { QueryDepartmentDto } from './dto/query-department.dto';
+import { DepartmentReorderItemDto } from './dto/reorder-departments.dto';
+import { Prisma } from '@prisma/client';
+
+@Injectable()
+export class DepartmentsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
+
+  async create(dto: CreateDepartmentDto) {
+    const exists = await this.prisma.department.findFirst({
+      where: {
+        name: dto.name,
+        parentId: dto.parentId ?? null,
+      },
+    });
+
+    if (exists) {
+      throw new ConflictException('Підрозділ з такою назвою вже існує у даному блоці');
+    }
+
+    const department = await this.prisma.department.create({
+      data: {
+        name: dto.name,
+        parentId: dto.parentId,
+      },
+    });
+
+    await this.cacheManager.clear();
+    return department;
+  }
+
+  async findAll(query: QueryDepartmentDto) {
+    const pageNumber = Math.max(1, Number(query.page) || 1);
+    const limitNumber = Math.max(1, Number(query.limit) || 100);
+    const skip = (pageNumber - 1) * limitNumber;
+
+    const where: Prisma.DepartmentWhereInput = {};
+
+    if (query.parentId !== undefined) {
+      if (query.parentId === 'null' || query.parentId === '') {
+        where.parentId = null;
+      } else {
+        where.parentId = query.parentId;
+      }
+    }
+
+    if (query.search) {
+      where.name = { contains: query.search, mode: 'insensitive' };
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.department.findMany({
+        where,
+        skip,
+        take: limitNumber,
+        orderBy: [
+          { orderIndex: 'asc' },
+          { name: 'asc' },
+        ],
+        include: {
+          _count: { select: { children: true } },
+        },
+      }),
+      this.prisma.department.count({ where }),
+    ]);
+
+    const mappedData = data.map((dept) => ({
+      id: dept.id,
+      name: dept.name,
+      parentId: dept.parentId,
+      hasChildren: dept._count.children > 0,
+    }));
+
+    return {
+      data: mappedData,
+      meta: {
+        total,
+        page: pageNumber,
+        lastPage: Math.ceil(total / limitNumber) || 1,
+        limit: limitNumber,
+      },
+    };
+  }
+
+  async findAllTree() {
+    const departments = await this.prisma.department.findMany({
+      orderBy: [
+        { orderIndex: 'asc' },
+        { name: 'asc' },
+      ],
+      include: {
+        _count: { select: { children: true } },
+      },
+    });
+
+    return departments.map((dept) => ({
+      id: dept.id,
+      name: dept.name,
+      parentId: dept.parentId,
+      orderIndex: dept.orderIndex,
+      hasChildren: dept._count.children > 0,
+    }));
+  }
+
+  async reorder(items: DepartmentReorderItemDto[]) {
+    const queries = items.map((item) =>
+      this.prisma.department.update({
+        where: { id: item.id },
+        data: {
+          parentId: item.parentId !== undefined ? item.parentId : undefined,
+          orderIndex: item.orderIndex,
+        },
+      }),
+    );
+
+    await this.prisma.$transaction(queries);
+    await this.cacheManager.clear();
+
+    return { message: 'Порядок підрозділів успішно оновлено' };
+  }
+
+  async update(id: string, dto: UpdateDepartmentDto) {
+    const department = await this.prisma.department.findUnique({ where: { id } });
+    if (!department) {
+      throw new NotFoundException('Підрозділ не знайдено');
+    }
+
+    if (dto.parentId === id) {
+      throw new BadRequestException('Підрозділ не може бути підпорядкований самому собі');
+    }
+
+    if (dto.name || dto.parentId !== undefined) {
+      const nameToCheck = dto.name || department.name;
+      const parentToCheck = dto.parentId !== undefined ? dto.parentId : department.parentId;
+      
+      const exists = await this.prisma.department.findFirst({
+        where: {
+          name: nameToCheck,
+          parentId: parentToCheck,
+          id: { not: id }
+        },
+      });
+
+      if (exists) {
+        throw new ConflictException('Підрозділ з такою назвою вже існує у цьому блоці');
+      }
+    }
+
+    const updated = await this.prisma.department.update({
+      where: { id },
+      data: {
+        ...(dto.name && { name: dto.name }),
+        ...(dto.parentId !== undefined && { parentId: dto.parentId }),
+      },
+    });
+
+    await this.cacheManager.clear();
+    return updated;
+  }
+
+  async remove(id: string) {
+    const department = await this.prisma.department.findUnique({
+      where: { id },
+      include: { _count: { select: { children: true } } }
+    });
+
+    if (!department) {
+      throw new NotFoundException('Підрозділ не знайдено');
+    }
+
+    if (department._count.children > 0) {
+      throw new BadRequestException('Не можна видалити підрозділ, який має підпорядковані підрозділи. Спочатку перемістіть або видаліть їх.');
+    }
+
+    await this.prisma.department.delete({ where: { id } });
+    await this.cacheManager.clear();
+    
+    return { message: 'Підрозділ успішно видалено' };
+  }
+
+  async exportStructureJson() {
+    const departments = await this.prisma.department.findMany({
+      orderBy: [
+        { orderIndex: 'asc' },
+        { name: 'asc' },
+      ],
+    });
+
+    const formattedData = departments.map((dept) => ({
+      id: dept.id,
+      pid: dept.parentId,
+      label: dept.name,
+    }));
+
+    return JSON.stringify(formattedData, null, 2);
   }
 }
 </file>
@@ -5935,6 +6195,91 @@ export class ProjectsService {
 }
 </file>
 
+<file path="src/polls/polls.controller.ts">
+import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, Patch, Delete } from '@nestjs/common';
+import { PollsService } from './polls.service';
+import { CreatePollDto } from './dto/create-poll.dto';
+import { UpdatePollDto } from './dto/update-poll.dto';
+import { VotePollDto } from './dto/vote-poll.dto';
+import { UpdatePollVisibilityDto } from './dto/update-poll-visibility.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role, PollStatus } from '@prisma/client';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Request } from 'express';
+
+interface RequestWithUser extends Request {
+  user: { sub: string; email: string; role: Role };
+}
+
+@ApiTags('Polls')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('polls')
+export class PollsController {
+  constructor(private readonly pollsService: PollsService) {}
+
+  @ApiOperation({ summary: 'Створити опитування (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Post()
+  create(@Req() req: RequestWithUser, @Body() dto: CreatePollDto) {
+    return this.pollsService.create(req.user.sub, dto);
+  }
+
+  @ApiOperation({ summary: 'Редагувати опитування (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdatePollDto) {
+    return this.pollsService.update(id, dto);
+  }
+
+  @ApiOperation({ summary: 'Manage visibility of an archived poll (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Patch(':id/visibility')
+  updateVisibility(@Param('id') id: string, @Body() dto: UpdatePollVisibilityDto) {
+    return this.pollsService.updateVisibility(id, dto.extendDays);
+  }
+
+  @ApiOperation({ summary: 'Видалити опитування (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Delete(':id')
+  remove(@Param('id') id: string) {
+    return this.pollsService.remove(id);
+  }
+
+  @ApiOperation({ summary: 'Отримати список опитувань (із фільтрацією, сортуванням та пагінацією)' })
+  @Get()
+  findAll(
+    @Req() req: RequestWithUser,
+    @Query('departmentId') departmentId?: string,
+    @Query('status') status?: PollStatus,
+    @Query('sortBy') sortBy?: 'createdAt' | 'votes' | 'author',
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.pollsService.findAll(req.user, departmentId, status, sortBy, sortOrder, page, limit);
+  }
+
+  @ApiOperation({ summary: 'Отримати конкретне опитування' })
+  @Get(':id')
+  findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
+    return this.pollsService.findOne(id, req.user);
+  }
+
+  @ApiOperation({ summary: 'Проголосувати в опитуванні' })
+  @Post(':id/vote')
+  vote(
+    @Param('id') id: string,
+    @Req() req: RequestWithUser,
+    @Body() dto: VotePollDto,
+  ) {
+    return this.pollsService.vote(id, req.user, dto.optionId);
+  }
+}
+</file>
+
 <file path="src/users/users.controller.ts">
 import { 
   Controller, 
@@ -5965,7 +6310,6 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 
 interface RequestWithUser extends Request {
@@ -6047,11 +6391,32 @@ export class UsersController {
     return this.usersService.remove(id);
   }
 
-  @ApiOperation({ summary: 'Скинути пароль користувача вручну (ADMIN, SUPER_ADMIN)' })
+  @ApiOperation({ summary: 'Скинути пароль користувача (Автогенерація тимчасового) (ADMIN, SUPER_ADMIN)' })
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Post(':id/reset-password')
-  resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
-    return this.usersService.resetPassword(id, dto.newPassword);
+  resetPassword(@Param('id') id: string) {
+    return this.usersService.resetPassword(id);
+  }
+
+  @ApiOperation({ summary: 'Отримати список активних сесій конкретного користувача (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Get(':id/sessions')
+  getUserSessions(@Param('id') id: string) {
+    return this.usersService.getUserSessions(id);
+  }
+
+  @ApiOperation({ summary: 'Примусово завершити ВСІ сесії користувача (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Delete(':id/sessions')
+  revokeAllUserSessions(@Param('id') id: string) {
+    return this.usersService.revokeAllUserSessions(id);
+  }
+
+  @ApiOperation({ summary: 'Примусово завершити точкову сесію користувача (ADMIN, SUPER_ADMIN)' })
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Delete(':id/sessions/:sessionId')
+  revokeUserSession(@Param('id') id: string, @Param('sessionId') sessionId: string) {
+    return this.usersService.revokeUserSession(id, sessionId);
   }
 }
 </file>
@@ -6066,6 +6431,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { RegisterDto, LoginDto } from './dto/auth.dto';
 import * as bcrypt from 'bcrypt';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class AuthService {
@@ -6112,7 +6478,7 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, ip?: string, userAgent?: string) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -6153,8 +6519,19 @@ export class AuthService {
       });
     }
 
-    const tokens = await this.getTokens(user.id, user.email, user.role);
-    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+    const sessionId = randomUUID();
+    const tokens = await this.getTokens(user.id, user.email, user.role, sessionId);
+    const hash = await bcrypt.hash(tokens.refreshToken, 10);
+    
+    await this.prisma.userSession.create({
+      data: {
+        id: sessionId,
+        userId: user.id,
+        refreshToken: hash,
+        ipAddress: ip,
+        userAgent: userAgent,
+      },
+    });
     
     return {
       ...tokens,
@@ -6165,41 +6542,85 @@ export class AuthService {
         lastName: user.lastName,
         role: user.role,
         avatarUrl: user.avatarUrl,
+        forcePasswordChange: user.forcePasswordChange,
         createdAt: user.createdAt,
       },
     };
   }
 
-  async logout(userId: string) {
-    await this.prisma.user.updateMany({
-      where: { id: userId, refreshToken: { not: null } },
-      data: { refreshToken: null },
+  async logout(sessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { id: sessionId },
     });
     return { message: 'Успішний вихід із системи' };
   }
 
-  async refreshTokens(userId: string, refreshToken: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+  async refreshTokens(userId: string, sessionId: string, refreshToken: string, ip?: string, userAgent?: string) {
+    const session = await this.prisma.userSession.findUnique({
+      where: { id: sessionId },
+      include: { user: true },
     });
 
-    if (!user || !user.refreshToken || !user.isActive) {
+    if (!session || session.userId !== userId || !session.user.isActive) {
       throw new ForbiddenException('Доступ заборонено');
     }
 
-    const refreshTokenMatches = await bcrypt.compare(refreshToken, user.refreshToken);
+    const refreshTokenMatches = await bcrypt.compare(refreshToken, session.refreshToken);
     if (!refreshTokenMatches) {
       throw new ForbiddenException('Доступ заборонено');
     }
 
-    const tokens = await this.getTokens(user.id, user.email, user.role);
-    await this.updateRefreshTokenHash(user.id, tokens.refreshToken);
+    const tokens = await this.getTokens(userId, session.user.email, session.user.role, sessionId);
+    const hash = await bcrypt.hash(tokens.refreshToken, 10);
+
+    await this.prisma.userSession.update({
+      where: { id: sessionId },
+      data: {
+        refreshToken: hash,
+        lastActiveAt: new Date(),
+        ...(ip && { ipAddress: ip }),
+        ...(userAgent && { userAgent }),
+      },
+    });
 
     return tokens;
   }
 
-  private async getTokens(userId: string, email: string, role: string) {
-    const jwtPayload = { sub: userId, email, role };
+  async getSessions(userId: string, currentSessionId: string) {
+    const sessions = await this.prisma.userSession.findMany({
+      where: { userId },
+      orderBy: { lastActiveAt: 'desc' },
+    });
+
+    return sessions.map((session) => ({
+      id: session.id,
+      ipAddress: session.ipAddress,
+      userAgent: session.userAgent,
+      lastActiveAt: session.lastActiveAt,
+      createdAt: session.createdAt,
+      isCurrent: session.id === currentSessionId,
+    }));
+  }
+
+  async revokeOtherSessions(userId: string, currentSessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: {
+        userId,
+        id: { not: currentSessionId },
+      },
+    });
+    return { message: 'Всі інші сесії успішно завершені' };
+  }
+
+  async revokeSession(userId: string, sessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { userId, id: sessionId },
+    });
+    return { message: 'Сесію успішно завершено' };
+  }
+
+  private async getTokens(userId: string, email: string, role: string, sessionId: string) {
+    const jwtPayload = { sub: userId, email, role, sessionId };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(jwtPayload, {
@@ -6214,15 +6635,6 @@ export class AuthService {
 
     return { accessToken, refreshToken };
   }
-
-  private async updateRefreshTokenHash(userId: string, refreshToken: string) {
-    const saltRounds = 10;
-    const hash = await bcrypt.hash(refreshToken, saltRounds);
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { refreshToken: hash },
-    });
-  }
 }
 </file>
 
@@ -6235,6 +6647,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 
 @Injectable()
 export class UsersService {
@@ -6349,19 +6762,27 @@ export class UsersService {
     return { message: 'Користувача успішно видалено з системи' };
   }
 
-  async resetPassword(id: string, newPassword: string) {
+  async resetPassword(id: string) {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('Користувача не знайдено');
 
+    // Автоматична генерація надійного тимчасового пароля, який проходить валідацію DTO (мінімум 8 символів, велика, мала, цифра, спецсимвол)
+    const tempPassword = randomBytes(4).toString('hex') + 'A1!'; 
     const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+    const hashedPassword = await bcrypt.hash(tempPassword, saltRounds);
 
     await this.prisma.user.update({
       where: { id },
-      data: { passwordHash: hashedPassword },
+      data: { 
+        passwordHash: hashedPassword,
+        forcePasswordChange: true 
+      },
     });
 
-    return { message: 'Пароль успішно скинуто' };
+    return { 
+      message: 'Пароль успішно скинуто',
+      tempPassword 
+    };
   }
 
   async getMe(userId: string) {
@@ -6410,95 +6831,41 @@ export class UsersService {
 
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash: hashedPassword },
+      data: { 
+        passwordHash: hashedPassword,
+        forcePasswordChange: false 
+      },
     });
 
     return { message: 'Пароль успішно змінено' };
   }
-}
-</file>
 
-<file path="src/polls/polls.controller.ts">
-import { Controller, Get, Post, Body, Param, Query, UseGuards, Req, Patch, Delete } from '@nestjs/common';
-import { PollsService } from './polls.service';
-import { CreatePollDto } from './dto/create-poll.dto';
-import { UpdatePollDto } from './dto/update-poll.dto';
-import { VotePollDto } from './dto/vote-poll.dto';
-import { UpdatePollVisibilityDto } from './dto/update-poll-visibility.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
-import { Role, PollStatus } from '@prisma/client';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { Request } from 'express';
-
-interface RequestWithUser extends Request {
-  user: { sub: string; email: string; role: Role };
-}
-
-@ApiTags('Polls')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('polls')
-export class PollsController {
-  constructor(private readonly pollsService: PollsService) {}
-
-  @ApiOperation({ summary: 'Створити опитування (ADMIN, SUPER_ADMIN)' })
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Post()
-  create(@Req() req: RequestWithUser, @Body() dto: CreatePollDto) {
-    return this.pollsService.create(req.user.sub, dto);
+  async getUserSessions(userId: string) {
+    return this.prisma.userSession.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        ipAddress: true,
+        userAgent: true,
+        lastActiveAt: true,
+        createdAt: true,
+      },
+      orderBy: { lastActiveAt: 'desc' },
+    });
   }
 
-  @ApiOperation({ summary: 'Редагувати опитування (ADMIN, SUPER_ADMIN)' })
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdatePollDto) {
-    return this.pollsService.update(id, dto);
+  async revokeAllUserSessions(userId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { userId },
+    });
+    return { message: 'Всі сесії користувача примусово завершено' };
   }
 
-  @ApiOperation({ summary: 'Manage visibility of an archived poll (ADMIN, SUPER_ADMIN)' })
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Patch(':id/visibility')
-  updateVisibility(@Param('id') id: string, @Body() dto: UpdatePollVisibilityDto) {
-    return this.pollsService.updateVisibility(id, dto.extendDays);
-  }
-
-  @ApiOperation({ summary: 'Видалити опитування (ADMIN, SUPER_ADMIN)' })
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.pollsService.remove(id);
-  }
-
-  @ApiOperation({ summary: 'Отримати список опитувань (із фільтрацією, сортуванням та пагінацією)' })
-  @Get()
-  findAll(
-    @Req() req: RequestWithUser,
-    @Query('departmentId') departmentId?: string,
-    @Query('status') status?: PollStatus,
-    @Query('sortBy') sortBy?: 'createdAt' | 'votes' | 'author',
-    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.pollsService.findAll(req.user, departmentId, status, sortBy, sortOrder, page, limit);
-  }
-
-  @ApiOperation({ summary: 'Отримати конкретне опитування' })
-  @Get(':id')
-  findOne(@Req() req: RequestWithUser, @Param('id') id: string) {
-    return this.pollsService.findOne(id, req.user);
-  }
-
-  @ApiOperation({ summary: 'Проголосувати в опитуванні' })
-  @Post(':id/vote')
-  vote(
-    @Param('id') id: string,
-    @Req() req: RequestWithUser,
-    @Body() dto: VotePollDto,
-  ) {
-    return this.pollsService.vote(id, req.user, dto.optionId);
+  async revokeUserSession(userId: string, sessionId: string) {
+    await this.prisma.userSession.deleteMany({
+      where: { userId, id: sessionId },
+    });
+    return { message: 'Сесію користувача примусово завершено' };
   }
 }
 </file>
@@ -7327,6 +7694,7 @@ import { StorageModule } from './storage/storage.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { EmergencyBroadcastsModule } from './emergency-broadcasts/emergency-broadcasts.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -7361,7 +7729,8 @@ import { EmergencyBroadcastsModule } from './emergency-broadcasts/emergency-broa
     StorageModule,
     AnalyticsModule,
     AuditLogsModule,
-    EmergencyBroadcastsModule
+    EmergencyBroadcastsModule,
+    SettingsModule
   ],
   controllers: [AppController],
   providers: [
@@ -7846,6 +8215,12 @@ enum BroadcastStatus {
   PENDING
 }
 
+enum BannerSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
 enum NewsStatus {
   DRAFT
   SCHEDULED
@@ -7888,7 +8263,7 @@ model User {
   avatarUrl           String?
   isActive            Boolean  @default(true)
   failedLoginAttempts Int      @default(0)
-  refreshToken        String?  @db.Text
+  forcePasswordChange Boolean  @default(false)
   createdAt           DateTime @default(now())
 
   departmentId        String?
@@ -7912,8 +8287,23 @@ model User {
   apiAuditLogs    ApiAuditLog[]
   auditLogsRef    AuditLog[]
   emergencyBroadcasts EmergencyBroadcast[]
+  sessions        UserSession[]
 
   @@index([departmentId])
+}
+
+model UserSession {
+  id           String   @id @default(uuid())
+  refreshToken String   @db.Text
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model AuditLog {
@@ -7960,6 +8350,7 @@ model Department {
   id         String      @id @default(uuid())
   name       String
   parentId   String?
+  orderIndex Int         @default(0)
   parent     Department? @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: Cascade)
   children   Department[] @relation("DepartmentTree")
 
@@ -8213,6 +8604,18 @@ model EmergencyBroadcast {
 
   @@index([severity, createdAt])
   @@index([authorId])
+}
+
+model SystemSetting {
+  id                   String         @id @default("global")
+  maintenanceMode      Boolean        @default(false)
+  maintenanceMessage   String?        @db.Text
+  globalBannerEnabled  Boolean        @default(false)
+  globalBannerText     String?        @db.Text
+  globalBannerSeverity BannerSeverity @default(INFO)
+  maxPdfSizeMB         Int            @default(20)
+  maxMediaSizeMB       Int            @default(100)
+  updatedAt            DateTime       @updatedAt
 }
 </file>
 
