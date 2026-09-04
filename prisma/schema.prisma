@@ -139,6 +139,7 @@ model User {
 model UserSession {
   id           String   @id @default(uuid())
   refreshToken String   @db.Text
+  fcmToken     String?  @db.Text
   ipAddress    String?
   userAgent    String?
   createdAt    DateTime @default(now())
@@ -148,6 +149,7 @@ model UserSession {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([fcmToken])
 }
 
 model AuditLog {

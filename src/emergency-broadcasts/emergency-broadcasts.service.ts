@@ -1,12 +1,16 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateEmergencyBroadcastDto } from './dto/create-emergency-broadcast.dto';
 import { QueryEmergencyBroadcastDto } from './dto/query-emergency-broadcast.dto';
 import { BroadcastStatus, Prisma } from '@prisma/client';
 
 @Injectable()
 export class EmergencyBroadcastsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(authorId: string, dto: CreateEmergencyBroadcastDto) {
     if (dto.departmentIds && dto.departmentIds.length > 0) {
@@ -34,22 +38,48 @@ export class EmergencyBroadcastsService {
     });
 
     try {
-      // TODO: Інтеграція з FCM/APNs для відправки Push-повідомлень.
-      // const fcmResult = await this.pushNotificationService.sendAlert(broadcast);
-      
-      // Імітація успішної відправки (Mock)
-      const mockRecipientCount = dto.departmentIds?.length ? 250 : 15000; 
+      let targetTokens: { fcmToken: string | null }[] = [];
+
+      if (dto.departmentIds && dto.departmentIds.length > 0) {
+        targetTokens = await this.prisma.userSession.findMany({
+          where: {
+            fcmToken: { not: null },
+            user: { departmentId: { in: dto.departmentIds } },
+          },
+          select: { fcmToken: true },
+        });
+      } else {
+        targetTokens = await this.prisma.userSession.findMany({
+          where: { fcmToken: { not: null } },
+          select: { fcmToken: true },
+        });
+      }
+
+      const validTokens = targetTokens.map(t => t.fcmToken as string);
+
+      if (validTokens.length > 0) {
+        await this.notificationsService.sendMulticast(
+          validTokens,
+          dto.title,
+          dto.body,
+          {
+            type: 'EMERGENCY',
+            broadcastId: broadcast.id,
+            severity: dto.severity,
+            sound: dto.soundPreset,
+          }
+        );
+      }
       
       return await this.prisma.emergencyBroadcast.update({
         where: { id: broadcast.id },
         data: {
           status: BroadcastStatus.SENT,
-          recipientCount: mockRecipientCount,
+          recipientCount: validTokens.length,
         },
         include: { departments: { select: { id: true, name: true } } },
       });
     } catch (error) {
-      // Обробка помилки відправки
       return await this.prisma.emergencyBroadcast.update({
         where: { id: broadcast.id },
         data: { status: BroadcastStatus.FAILED },

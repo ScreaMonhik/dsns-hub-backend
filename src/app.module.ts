@@ -23,6 +23,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { EmergencyBroadcastsModule } from './emergency-broadcasts/emergency-broadcasts.module';
 import { SettingsModule } from './settings/settings.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -58,7 +59,8 @@ import { SettingsModule } from './settings/settings.module';
     AnalyticsModule,
     AuditLogsModule,
     EmergencyBroadcastsModule,
-    SettingsModule
+    SettingsModule,
+    NotificationsModule
   ],
   controllers: [AppController],
   providers: [

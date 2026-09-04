@@ -195,6 +195,14 @@ export class AuthService {
     return { message: 'Сесію успішно завершено' };
   }
 
+  async updateFcmToken(sessionId: string, fcmToken: string) {
+    await this.prisma.userSession.update({
+      where: { id: sessionId },
+      data: { fcmToken },
+    });
+    return { message: 'FCM токен успішно оновлено для поточної сесії' };
+  }
+
   private async getTokens(userId: string, email: string, role: string, sessionId: string) {
     const jwtPayload = { sub: userId, email, role, sessionId };
 

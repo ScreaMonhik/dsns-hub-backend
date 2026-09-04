@@ -1,10 +1,10 @@
-import { Controller, Post, Body, UseGuards, Req, UnauthorizedException, Get, Delete, Param, Ip, Headers } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Req, UnauthorizedException, Get, Delete, Param, Ip, Headers, Patch } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto, RefreshTokenDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, RefreshTokenDto, UpdateFcmTokenDto } from './dto/auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { Role } from '@prisma/client';
 
@@ -85,5 +85,13 @@ export class AuthController {
   @Delete('sessions/:sessionId')
   revokeSession(@Req() req: RequestWithUser, @Param('sessionId') sessionId: string) {
     return this.authService.revokeSession(req.user.sub, sessionId);
+  }
+
+  @ApiOperation({ summary: 'Оновити FCM токен для отримання Push-сповіщень на поточному пристрої' })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @Patch('session/fcm-token')
+  updateFcmToken(@Req() req: RequestWithUser, @Body() dto: UpdateFcmTokenDto) {
+    return this.authService.updateFcmToken(req.user.sessionId, dto.fcmToken);
   }
 }

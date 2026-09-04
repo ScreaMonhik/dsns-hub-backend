@@ -49,3 +49,10 @@ export class RefreshTokenDto {
   @IsNotEmpty()
   refreshToken!: string;
 }
+
+export class UpdateFcmTokenDto {
+  @ApiProperty({ description: 'Firebase Cloud Messaging Device Token', example: 'dK8j9...aB3' })
+  @IsString()
+  @IsNotEmpty()
+  fcmToken!: string;
+}
