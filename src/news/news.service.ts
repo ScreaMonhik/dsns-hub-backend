@@ -41,27 +41,46 @@ export class NewsService {
     sortBy?: string,
     sortOrder?: string,
     departmentId?: string,
+    search?: string,
   ) {
     const skip = (page - 1) * limit;
 
-    const where: Prisma.NewsWhereInput = {
-      ...(categoryId && { categoryId }),
-      ...(departmentId && { departments: { some: { id: departmentId } } }),
-    };
+    const andConditions: Prisma.NewsWhereInput[] = [];
+
+    if (categoryId) {
+      andConditions.push({ categoryId });
+    }
+
+    if (departmentId) {
+      andConditions.push({ departments: { some: { id: departmentId } } });
+    }
+
+    if (search) {
+      andConditions.push({
+        OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { content: { contains: search, mode: 'insensitive' } },
+        ],
+      });
+    }
 
     if (user.role === Role.ADMIN || user.role === Role.SUPER_ADMIN) {
       if (status) {
-        where.status = status;
+        andConditions.push({ status });
       } else {
-        where.status = { not: NewsStatus.ARCHIVED };
+        andConditions.push({ status: { not: NewsStatus.ARCHIVED } });
       }
     } else {
-      where.status = NewsStatus.PUBLISHED;
-      where.OR = [
-        { publishedAt: null },
-        { publishedAt: { lte: new Date() } }
-      ];
+      andConditions.push({ status: NewsStatus.PUBLISHED });
+      andConditions.push({
+        OR: [
+          { publishedAt: null },
+          { publishedAt: { lte: new Date() } },
+        ],
+      });
     }
+
+    const where: Prisma.NewsWhereInput = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const validSortFields = [
       'id', 'title', 'content', 'imageUrl', 'status', 

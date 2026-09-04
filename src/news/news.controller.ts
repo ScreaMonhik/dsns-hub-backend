@@ -142,6 +142,7 @@ export class NewsController {
     @Query('sortBy') sortBy?: string,
     @Query('sortOrder') sortOrder?: string,
     @Query('departmentId') departmentId?: string,
+    @Query('search') search?: string,
   ) {
     return this.newsService.findAll(
       req.user,
@@ -152,6 +153,7 @@ export class NewsController {
       sortBy,
       sortOrder,
       departmentId,
+      search,
     );
   }
 
